@@ -23,8 +23,8 @@ services:
     name: proposal-bot
     runtime: python
     region: singapore
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    buildCommand: apt-get update && apt-get install -y fontconfig && pip install -r requirements.txt
+    startCommand: ./install_fonts.sh && uvicorn server:app --host 0.0.0.0 --port $PORT
     envVars:
       - fromGroup: proposal-bot-shared
     disk:
