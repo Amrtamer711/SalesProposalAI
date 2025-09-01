@@ -1,0 +1,202 @@
+[
+  [
+    [
+      {
+        "text": "",
+        "font_size": 18.0,
+        "bold": false,
+        "italic": null,
+        "underline": null,
+        "font_color": "#000000",
+        "alignment": "None",
+        "bg_color": null
+      },
+      {
+        "text": "",
+        "font_size": 18.0,
+        "bold": false,
+        "italic": null,
+        "underline": null,
+        "font_color": "#000000",
+        "alignment": "None",
+        "bg_color": null
+      }
+    ],
+    [
+      {
+        "text": "Location:",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:ACCENT_1 (5)",
+        "alignment": "None",
+        "bg_color": "#FFFFFF"
+      },
+      {
+        "text": "The Triple Crown \u2013 3 Digital Unipoles \u2013 6 Screens \u2013 fully synched  \u2013 1 Spot\u2013 16 Seconds \u2013 16.6% SOV \u2013 Total Loop is 6 spots",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:ACCENT_1 (5)",
+        "alignment": "CENTER (2)",
+        "bg_color": "#FFFFFF"
+      }
+    ],
+    [
+      {
+        "text": "Start Date:",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "unknown",
+        "alignment": "None",
+        "bg_color": "#FFFFFF"
+      },
+      {
+        "text": "1st December 2025",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:TEXT_1 (13)",
+        "alignment": "CENTER (2)",
+        "bg_color": "#FFFFFF"
+      }
+    ],
+    [
+      {
+        "text": "Duration:",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "unknown",
+        "alignment": "None",
+        "bg_color": "#FFFFFF"
+      },
+      {
+        "text": "2 Weeks",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:TEXT_1 (13)",
+        "alignment": "CENTER (2)",
+        "bg_color": "#FFFFFF"
+      }
+    ],
+    [
+      {
+        "text": "Net Rate:",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "#FF0000",
+        "alignment": "None",
+        "bg_color": "#FFFFFF"
+      },
+      {
+        "text": "AED 1,250,000",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "#FF0000",
+        "alignment": "CENTER (2)",
+        "bg_color": "#FFFFFF"
+      }
+    ],
+    [
+      {
+        "text": "Upload Fee:",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:ACCENT_1 (5)",
+        "alignment": "None",
+        "bg_color": "#FFFFFF"
+      },
+      {
+        "text": "AED 3,000",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:ACCENT_1 (5)",
+        "alignment": "CENTER (2)",
+        "bg_color": "#FFFFFF"
+      }
+    ],
+    [
+      {
+        "text": "Municipality Fee:",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:ACCENT_1 (5)",
+        "alignment": "None",
+        "bg_color": "#FFFFFF"
+      },
+      {
+        "text": "AED 520 Per Image/Message",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:ACCENT_1 (5)",
+        "alignment": "CENTER (2)",
+        "bg_color": "#FFFFFF"
+      }
+    ],
+    [
+      {
+        "text": "VAT 5% :",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:TEXT_1 (13)",
+        "alignment": "None",
+        "bg_color": "#FFFFFF"
+      },
+      {
+        "text": "AED 62,676",
+        "font_size": 12.0,
+        "bold": false,
+        "italic": false,
+        "underline": null,
+        "font_color": "unknown",
+        "alignment": "CENTER (2)",
+        "bg_color": "#FFFFFF"
+      }
+    ],
+    [
+      {
+        "text": "Total:",
+        "font_size": 18.0,
+        "bold": true,
+        "italic": false,
+        "underline": null,
+        "font_color": "theme:BACKGROUND_1 (14)",
+        "alignment": "LEFT (1)",
+        "bg_color": "theme:BACKGROUND_2 (16)"
+      },
+      {
+        "text": "AED 1,316,196",
+        "font_size": 18.0,
+        "bold": true,
+        "italic": false,
+        "underline": false,
+        "font_color": "theme:BACKGROUND_1 (14)",
+        "alignment": "CENTER (2)",
+        "bg_color": "theme:BACKGROUND_2 (16)"
+      }
+    ]
+  ]
+]
