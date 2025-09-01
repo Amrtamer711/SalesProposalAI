@@ -6,11 +6,11 @@ import logging
 logger = logging.getLogger("proposal-bot")
 
 def install_custom_fonts():
-    """Install fonts from /data/fonts directory for python-pptx usage."""
-    data_fonts_dir = Path("/data/fonts")
+    """Install fonts from /data/Sofia-Pro Font directory for python-pptx usage."""
+    data_fonts_dir = Path("/data/Sofia-Pro Font")
     
     if not data_fonts_dir.exists():
-        logger.info("No fonts directory found in /data/fonts")
+        logger.info("No fonts directory found in /data/Sofia-Pro Font")
         return
     
     # Multiple possible font directories
@@ -24,7 +24,7 @@ def install_custom_fonts():
     font_files = list(data_fonts_dir.glob("*.ttf")) + list(data_fonts_dir.glob("*.otf"))
     
     if not font_files:
-        logger.info("No font files found in /data/fonts")
+        logger.info("No font files found in /data/Sofia-Pro Font")
         return
     
     # Try to copy fonts to available directories
@@ -42,6 +42,6 @@ def install_custom_fonts():
             continue
     
     # Set environment variable for fontconfig
-    os.environ['FONTCONFIG_PATH'] = '/data/fonts'
+    os.environ['FONTCONFIG_PATH'] = '/data/Sofia-Pro Font'
     
     logger.info("Custom fonts installation completed")

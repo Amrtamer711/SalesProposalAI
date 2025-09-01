@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# Install fonts from /data/fonts if they exist
-if [ -d "/data/fonts" ]; then
-    echo "Installing fonts from /data/fonts..."
+# Install fonts from /data/Sofia-Pro Font if they exist
+if [ -d "/data/Sofia-Pro Font" ]; then
+    echo "Installing fonts from /data/Sofia-Pro Font..."
     
     # Create user fonts directory
     mkdir -p ~/.local/share/fonts
     
     # Copy all font files
-    cp /data/fonts/*.ttf ~/.local/share/fonts/ 2>/dev/null || true
-    cp /data/fonts/*.otf ~/.local/share/fonts/ 2>/dev/null || true
+    cp "/data/Sofia-Pro Font"/*.ttf ~/.local/share/fonts/ 2>/dev/null || true
+    cp "/data/Sofia-Pro Font"/*.otf ~/.local/share/fonts/ 2>/dev/null || true
     
     # Try to update font cache if fc-cache exists
     if command -v fc-cache &> /dev/null; then
@@ -20,5 +20,5 @@ if [ -d "/data/fonts" ]; then
     
     echo "Fonts installed successfully"
 else
-    echo "No fonts directory found in /data/fonts"
+    echo "No fonts directory found in /data/Sofia-Pro Font"
 fi
