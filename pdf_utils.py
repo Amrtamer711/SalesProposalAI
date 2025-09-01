@@ -16,10 +16,15 @@ _CONVERT_SEMAPHORE = asyncio.Semaphore(int(os.getenv("PDF_CONVERT_CONCURRENCY", 
 
 
 def convert_pptx_to_pdf(pptx_path: str) -> str:
+    logger = config.logger
+    logger.info(f"[PDF_CONVERT] Starting conversion of '{pptx_path}'")
+    
     pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf_file.close()
+    logger.info(f"[PDF_CONVERT] Target PDF path: '{pdf_file.name}'")
 
     system = platform.system()
+    logger.info(f"[PDF_CONVERT] Operating system: {system}")
 
     libreoffice_paths = [
         '/opt/homebrew/bin/soffice',
@@ -33,6 +38,7 @@ def convert_pptx_to_pdf(pptx_path: str) -> str:
     for lo_path in libreoffice_paths:
         if shutil.which(lo_path) or os.path.exists(lo_path):
             try:
+                logger.info(f"[PDF_CONVERT] Trying LibreOffice at '{lo_path}'")
                 cmd = [lo_path, '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(pdf_file.name), pptx_path]
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                 if result.returncode == 0:
@@ -42,9 +48,12 @@ def convert_pptx_to_pdf(pptx_path: str) -> str:
                     )
                     if os.path.exists(converted_pdf):
                         shutil.move(converted_pdf, pdf_file.name)
+                        logger.info(f"[PDF_CONVERT] Successfully converted using LibreOffice")
                         return pdf_file.name
+                else:
+                    logger.warning(f"[PDF_CONVERT] LibreOffice failed with code {result.returncode}: {result.stderr}")
             except Exception as e:
-                config.logger.debug(f"LibreOffice conversion failed: {e}")
+                logger.debug(f"[PDF_CONVERT] LibreOffice conversion failed: {e}")
                 continue
 
     if shutil.which('unoconv'):
@@ -140,26 +149,43 @@ def convert_pptx_to_pdf(pptx_path: str) -> str:
 
 
 def merge_pdfs(pdf_files: list) -> str:
+    logger = config.logger
+    logger.info(f"[PDF_MERGE] Merging {len(pdf_files)} PDF files")
+    for idx, pdf in enumerate(pdf_files):
+        logger.info(f"[PDF_MERGE]   File {idx + 1}: '{pdf}'")
+    
     output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     output_file.close()
+    logger.info(f"[PDF_MERGE] Output file: '{output_file.name}'")
+    
     pdf_writer = PdfWriter()
     for pdf_path in pdf_files:
         pdf_reader = PdfReader(pdf_path)
+        page_count = len(pdf_reader.pages)
+        logger.info(f"[PDF_MERGE] Adding {page_count} pages from '{pdf_path}'")
         for page in pdf_reader.pages:
             pdf_writer.add_page(page)
+    
     with open(output_file.name, 'wb') as output:
         pdf_writer.write(output)
+    
+    logger.info(f"[PDF_MERGE] Successfully merged PDFs to '{output_file.name}'")
     return output_file.name
 
 
 async def remove_slides_and_convert_to_pdf(pptx_path: str, remove_first: bool = False, remove_last: bool = False) -> str:
     import shutil as _sh
     import tempfile as _tf
+    
+    logger = config.logger
+    logger.info(f"[REMOVE_SLIDES] Processing '{pptx_path}'")
+    logger.info(f"[REMOVE_SLIDES] Remove first: {remove_first}, Remove last: {remove_last}")
 
     async with _CONVERT_SEMAPHORE:
         temp_pptx = _tf.NamedTemporaryFile(delete=False, suffix=".pptx")
         temp_pptx.close()
         _sh.copy2(pptx_path, temp_pptx.name)
+        logger.info(f"[REMOVE_SLIDES] Created temp file: '{temp_pptx.name}'")
 
         pres = Presentation(temp_pptx.name)
         xml_slides = pres.slides._sldIdLst

@@ -147,10 +147,91 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
     available_names = ", ".join(config.available_location_names())
 
     prompt = (
-        f"You are a sales proposal bot for BackLite Media. You help create financial proposals for digital locations.\n"
-        f"You can also ADD new locations by collecting a PPTX and a metadata.txt from the user.\n"
-        f"Rules when ADDING location: Keep asking for missing pieces, avoid duplicates (if similar name exists, ask to confirm overwrite or cancel), and only execute the addition after explicit confirmation.\n"
-        f"AVAILABLE LOCATIONS: {available_names}\n"
+        f"You are a sales proposal bot for BackLite Media. You help create financial proposals for digital advertising locations.\n"
+        f"You can handle SINGLE or MULTIPLE location proposals in one request.\n\n"
+        f"PACKAGE TYPES:\n"
+        f"1. SEPARATE PACKAGE (default): Each location gets its own proposal slide, multiple durations/rates allowed per location\n"
+        f"2. COMBINED PACKAGE: All locations in ONE proposal slide, single duration per location, one combined net rate\n\n"
+        
+        f"AVAILABLE LOCATIONS: {available_names}\n\n"
+        
+        f"REQUIRED INFORMATION:\n"
+        f"For SEPARATE PACKAGE (each location):\n"
+        f"1. Location (must be one of the available locations)\n"
+        f"2. Start Date\n"
+        f"3. Duration Options (multiple allowed)\n"
+        f"4. Net Rates for EACH duration\n"
+        f"5. Client Name (required)\n"
+        f"6. Submitted By (optional - defaults to current user)\n\n"
+        f"For COMBINED PACKAGE:\n"
+        f"1. All Locations\n"
+        f"2. Start Date for EACH location\n"
+        f"3. ONE Duration per location\n"
+        f"4. ONE Combined Net Rate for entire package\n"
+        f"5. Client Name (required)\n"
+        f"6. Submitted By (optional - defaults to current user)\n\n"
+        
+        f"MULTIPLE PROPOSALS RULES:\n"
+        f"- User can request proposals for multiple locations at once\n"
+        f"- EACH location must have its own complete set of information\n"
+        f"- EACH location must have matching number of durations and net rates\n"
+        f"- Different locations can have different durations/rates\n"
+        f"- Multiple proposals will be combined into a single PDF document\n\n"
+        
+        f"VALIDATION RULES:\n"
+        f"- For EACH location, durations count MUST equal net rates count\n"
+        f"- If a location has 3 duration options, it MUST have exactly 3 net rates\n"
+        f"- DO NOT proceed until ALL locations have complete information\n"
+        f"- Ask follow-up questions for any missing information\n"
+        f"- ALWAYS ask for client name if not provided\n\n"
+        
+        f"PARSING EXAMPLES:\n"
+        f"User: 'jawhara, oryx and triple crown special combined deal 2 mil, 2, 4 and 6 weeks respectively, 1st jan 2026, 2nd jan 2026 and 3rd'\n"
+        f"Parse as: Combined package with Jawhara (2 weeks, Jan 1), Oryx (4 weeks, Jan 2), Triple Crown (6 weeks, Jan 3), total 2 million AED\n\n"
+        
+        f"SINGLE LOCATION EXAMPLE:\n"
+        f"User: 'Proposal for landmark, Jan 1st, 2 weeks at 1.5M'\n"
+        f"Bot confirms and generates one proposal\n\n"
+        
+        f"MULTIPLE LOCATIONS EXAMPLE:\n"
+        f"User: 'I need proposals for landmark and gateway'\n"
+        f"Bot: 'I'll help you create proposals for The Landmark and The Gateway. Let me get the details for each:\n\n"
+        f"For THE LANDMARK:\n"
+        f"- What's the campaign start date?\n"
+        f"- What duration options do you want?\n"
+        f"- What are the net rates for each duration?\n\n"
+        f"For THE GATEWAY:\n"
+        f"- What's the campaign start date?\n"
+        f"- What duration options do you want?\n"
+        f"- What are the net rates for each duration?'\n\n"
+        
+        f"COMBINED PACKAGE EXAMPLE:\n"
+        f"User: 'I need a combined package for landmark, gateway, and oryx at 5 million total'\n"
+        f"Bot: 'I'll create a combined package proposal. Let me confirm the details:\n\n"
+        f"COMBINED PACKAGE:\n"
+        f"- Locations: The Landmark, The Gateway, The Oryx\n"
+        f"- Package Net Rate: AED 5,000,000\n\n"
+        f"For each location, I need:\n"
+        f"- Start date\n"
+        f"- Duration (one per location for combined packages)\n\n"
+        f"Please provide these details.'\n\n"
+        
+        f"ADDITIONAL FEATURES:\n"
+        f"- You can ADD new locations by collecting a PPTX and metadata.txt\n"
+        f"- You can REFRESH templates to reload available locations\n"
+        f"- You can LIST available locations\n"
+        f"- You can EDIT tasks (for task management workflows)\n\n"
+        
+        f"IMPORTANT:\n"
+        f"- Use get_separate_proposals for individual location proposals with multiple duration/rate options\n"
+        f"- Use get_combined_proposal for special package deals with one total price\n"
+        f"- For SEPARATE packages: each location gets its own proposal slide\n"
+        f"- For COMBINED packages: all locations in ONE proposal slide with ONE net rate\n"
+        f"- Single location always uses get_separate_proposals\n"
+        f"- When user mentions 'combined deal' or 'special package' with total price, use get_combined_proposal\n"
+        f"- Format all rates as 'AED X,XXX,XXX'\n"
+        f"- Parse 'mil' or 'million' as 000,000 (e.g., '2 mil' = 'AED 2,000,000')\n"
+        f"- ALWAYS collect client name - it's required for tracking"
     )
 
     history = user_history.get(user_id, [])
@@ -159,7 +240,77 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
     messages = [{"role": "developer", "content": prompt}] + history
 
     tools = [
-        {"type": "function", "name": "get_proposals", "parameters": {"type": "object", "properties": {"proposals": {"type": "array", "items": {"type": "object"}}, "package_type": {"type": "string", "enum": ["separate", "combined"], "default": "separate"}, "combined_net_rate": {"type": "string"}, "submitted_by": {"type": "string"}, "client_name": {"type": "string"}}, "required": ["proposals"]}},
+        {
+            "type": "function", 
+            "name": "get_separate_proposals",
+            "description": "Generate SEPARATE proposals - each location gets its own proposal slide with multiple duration/rate options. Returns individual PPTs and combined PDF.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "proposals": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "location": {"type": "string", "description": "The location name (e.g., landmark, gateway, oryx)"},
+                                "start_date": {"type": "string", "description": "Start date for the campaign (e.g., 1st December 2025)"},
+                                "durations": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "List of duration options (e.g., ['2 Weeks', '4 Weeks', '6 Weeks'])"
+                                },
+                                "net_rates": {
+                                    "type": "array", 
+                                    "items": {"type": "string"},
+                                    "description": "List of net rates corresponding to each duration (e.g., ['AED 1,250,000', 'AED 2,300,000', 'AED 3,300,000'])"
+                                },
+                                "spots": {"type": "integer", "description": "Number of spots (default: 1)", "default": 1}
+                            },
+                            "required": ["location", "start_date", "durations", "net_rates"]
+                        },
+                        "description": "Array of proposal objects. Each location can have multiple duration/rate options."
+                    },
+                    "client_name": {
+                        "type": "string",
+                        "description": "Name of the client (required)"
+                    }
+                },
+                "required": ["proposals", "client_name"]
+            }
+        },
+        {
+            "type": "function", 
+            "name": "get_combined_proposal",
+            "description": "Generate COMBINED package proposal - all locations in ONE slide with single net rate. Use for special package deals.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "proposals": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "location": {"type": "string", "description": "The location name (e.g., landmark, gateway, oryx)"},
+                                "start_date": {"type": "string", "description": "Start date for this location (e.g., 1st January 2026)"},
+                                "duration": {"type": "string", "description": "Duration for this location (e.g., '2 Weeks')"},
+                                "spots": {"type": "integer", "description": "Number of spots (default: 1)", "default": 1}
+                            },
+                            "required": ["location", "start_date", "duration"]
+                        },
+                        "description": "Array of locations with their individual durations and start dates"
+                    },
+                    "combined_net_rate": {
+                        "type": "string",
+                        "description": "The total net rate for the entire package (e.g., 'AED 2,000,000')"
+                    },
+                    "client_name": {
+                        "type": "string",
+                        "description": "Name of the client (required)"
+                    }
+                },
+                "required": ["proposals", "combined_net_rate", "client_name"]
+            }
+        },
         {"type": "function", "name": "refresh_templates", "parameters": {"type": "object", "properties": {}}},
         {"type": "function", "name": "edit_task_flow", "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "task_data": {"type": "object"}}, "required": ["task_number", "task_data"]}},
         {"type": "function", "name": "add_location", "description": "Conversationally add new location: gather location_key, files (pptx, metadata), dedupe, confirm, then persist and refresh", "parameters": {"type": "object", "properties": {"location_key": {"type": "string", "description": "Folder/key name to use (lowercase, no spaces)"}, "confirm": {"type": "boolean", "description": "True only when user explicitly confirms"}}, "required": ["location_key"]}},
@@ -175,45 +326,78 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
 
         msg = res.output[0]
         if msg.type == "function_call":
-            if msg.name == "get_proposals":
+            if msg.name == "get_separate_proposals":
                 args = json.loads(msg.arguments)
                 proposals_data = args.get("proposals", [])
-                package_type = args.get("package_type", "separate")
-                combined_net_rate = args.get("combined_net_rate", None)
-                submitted_by = args.get("submitted_by") or user_id
                 client_name = args.get("client_name") or "Unknown Client"
+                
+                logger.info(f"[SEPARATE] Raw args: {args}")
+                logger.info(f"[SEPARATE] Proposals data: {proposals_data}")
+                logger.info(f"[SEPARATE] Client: {client_name}, User: {user_id}")
 
                 if not proposals_data:
                     await config.slack_client.chat_postMessage(channel=channel, text="❌ No proposals data provided")
-                else:
-                    if package_type == "combined" and (not combined_net_rate or len(proposals_data) < 2):
-                        await config.slack_client.chat_postMessage(channel=channel, text="❌ Combined package needs 2+ locations and a combined net rate.")
-                        return
+                    return
+                
+                result = await process_proposals(proposals_data, "separate", None, user_id, client_name)
+            elif msg.name == "get_combined_proposal":
+                args = json.loads(msg.arguments)
+                proposals_data = args.get("proposals", [])
+                combined_net_rate = args.get("combined_net_rate", None)
+                client_name = args.get("client_name") or "Unknown Client"
+                
+                logger.info(f"[COMBINED] Raw args: {args}")
+                logger.info(f"[COMBINED] Proposals data: {proposals_data}")
+                logger.info(f"[COMBINED] Combined rate: {combined_net_rate}")
+                logger.info(f"[COMBINED] Client: {client_name}, User: {user_id}")
 
-                    result = await process_proposals(proposals_data, package_type, combined_net_rate, submitted_by, client_name)
-
-                    if result["success"]:
-                        if result.get("is_combined"):
-                            await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=f"Combined package for {result['locations']}")
-                            try: os.unlink(result["pdf_path"])  # type: ignore
-                            except: pass
-                        elif result.get("is_single"):
-                            await config.slack_client.files_upload_v2(channel=channel, file=result["pptx_path"], filename=result["pptx_filename"], initial_comment=f"PPT for {result['location']}")
-                            await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=f"PDF for {result['location']}")
-                            try:
-                                os.unlink(result["pptx_path"])  # type: ignore
-                                os.unlink(result["pdf_path"])  # type: ignore
-                            except: pass
-                        else:
-                            for f in result["individual_files"]:
-                                await config.slack_client.files_upload_v2(channel=channel, file=f["path"], filename=f["filename"], initial_comment=f"PPT for {f['location']}")
-                            await config.slack_client.files_upload_v2(channel=channel, file=result["merged_pdf_path"], filename=result["merged_pdf_filename"], initial_comment=f"Combined PDF for {result['locations']}")
-                            try:
-                                for f in result["individual_files"]: os.unlink(f["path"])  # type: ignore
-                                os.unlink(result["merged_pdf_path"])  # type: ignore
-                            except: pass
+                if not proposals_data:
+                    await config.slack_client.chat_postMessage(channel=channel, text="❌ No proposals data provided")
+                    return
+                elif not combined_net_rate:
+                    await config.slack_client.chat_postMessage(channel=channel, text="❌ Combined package requires a combined net rate")
+                    return
+                elif len(proposals_data) < 2:
+                    await config.slack_client.chat_postMessage(channel=channel, text="❌ Combined package requires at least 2 locations")
+                    return
+                
+                # Transform proposals data for combined package (add durations as list with single item)
+                for proposal in proposals_data:
+                    if "duration" in proposal:
+                        proposal["durations"] = [proposal.pop("duration")]
+                        logger.info(f"[COMBINED] Transformed proposal: {proposal}")
+                        
+                result = await process_proposals(proposals_data, "combined", combined_net_rate, user_id, client_name)
+            
+            # Handle result for both get_separate_proposals and get_combined_proposal
+            if msg.name in ["get_separate_proposals", "get_combined_proposal"] and 'result' in locals():
+                logger.info(f"[RESULT] Processing result: {result}")
+                if result["success"]:
+                    if result.get("is_combined"):
+                        logger.info(f"[RESULT] Combined package - PDF: {result.get('pdf_filename')}")
+                        await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=f"Combined package for {result['locations']}")
+                        try: os.unlink(result["pdf_path"])  # type: ignore
+                        except: pass
+                    elif result.get("is_single"):
+                        logger.info(f"[RESULT] Single proposal - Location: {result.get('location')}")
+                        await config.slack_client.files_upload_v2(channel=channel, file=result["pptx_path"], filename=result["pptx_filename"], initial_comment=f"PPT for {result['location']}")
+                        await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=f"PDF for {result['location']}")
+                        try:
+                            os.unlink(result["pptx_path"])  # type: ignore
+                            os.unlink(result["pdf_path"])  # type: ignore
+                        except: pass
                     else:
-                        await config.slack_client.chat_postMessage(channel=channel, text=f"❌ {result['error']}")
+                        logger.info(f"[RESULT] Multiple separate proposals - Count: {len(result.get('individual_files', []))}")
+                        for f in result["individual_files"]:
+                            await config.slack_client.files_upload_v2(channel=channel, file=f["path"], filename=f["filename"], initial_comment=f"PPT for {f['location']}")
+                        await config.slack_client.files_upload_v2(channel=channel, file=result["merged_pdf_path"], filename=result["merged_pdf_filename"], initial_comment=f"Combined PDF for {result['locations']}")
+                        try:
+                            for f in result["individual_files"]: os.unlink(f["path"])  # type: ignore
+                            os.unlink(result["merged_pdf_path"])  # type: ignore
+                        except: pass
+                else:
+                    logger.error(f"[RESULT] Error: {result.get('error')}")
+                    await config.slack_client.chat_postMessage(channel=channel, text=f"❌ {result['error']}")
 
             elif msg.name == "refresh_templates":
                 config.refresh_templates()

@@ -72,20 +72,37 @@ def create_combined_proposal_with_template(source_path: str, proposals_data: lis
 
 
 async def process_combined_package(proposals_data: list, combined_net_rate: str, submitted_by: str, client_name: str) -> Dict[str, Any]:
+    logger = config.logger
+    logger.info(f"[COMBINED] Starting process_combined_package")
+    logger.info(f"[COMBINED] Proposals: {proposals_data}")
+    logger.info(f"[COMBINED] Combined rate: {combined_net_rate}")
+    logger.info(f"[COMBINED] Client: {client_name}, Submitted by: {submitted_by}")
+    
     validated_proposals = []
     for idx, proposal in enumerate(proposals_data):
         location = proposal.get("location", "").lower().strip()
         start_date = proposal.get("start_date", "1st December 2025")
         durations = proposal.get("durations", [])
         spots = int(proposal.get("spots", 1))
+        
+        logger.info(f"[COMBINED] Validating proposal {idx + 1}:")
+        logger.info(f"[COMBINED]   Location: '{location}'")
+        logger.info(f"[COMBINED]   Start date: {start_date}")
+        logger.info(f"[COMBINED]   Durations: {durations}")
+        logger.info(f"[COMBINED]   Spots: {spots}")
 
         mapping = config.get_location_mapping()
+        logger.info(f"[COMBINED] Available mappings: {list(mapping.keys())}")
+        
         matched_key = None
         for key in mapping.keys():
             if key in location or location in key:
                 matched_key = key
+                logger.info(f"[COMBINED] Matched '{location}' to '{key}'")
                 break
+                
         if not matched_key:
+            logger.error(f"[COMBINED] No match found for location '{location}'")
             return {"success": False, "error": f"Unknown location '{location}' in proposal {idx + 1}"}
         if not durations:
             return {"success": False, "error": f"No duration specified for {matched_key}"}
@@ -175,12 +192,22 @@ async def process_proposals(
     submitted_by: str = "",
     client_name: str = "",
 ) -> Dict[str, Any]:
+    logger = config.logger
+    logger.info(f"[PROCESS] Starting process_proposals")
+    logger.info(f"[PROCESS] Package type: {package_type}")
+    logger.info(f"[PROCESS] Proposals data: {proposals_data}")
+    logger.info(f"[PROCESS] Combined rate: {combined_net_rate}")
+    logger.info(f"[PROCESS] Submitted by: {submitted_by}")
+    logger.info(f"[PROCESS] Client: {client_name}")
+    
     if not proposals_data:
         return {"success": False, "error": "No proposals provided"}
 
     is_single = len(proposals_data) == 1 and package_type != "combined"
+    logger.info(f"[PROCESS] Is single: {is_single}")
 
     if package_type == "combined" and len(proposals_data) > 1:
+        logger.info("[PROCESS] Routing to process_combined_package")
         return await process_combined_package(proposals_data, combined_net_rate, submitted_by, client_name)
 
     individual_files = []
@@ -195,14 +222,26 @@ async def process_proposals(
         durations = proposal.get("durations", [])
         net_rates = proposal.get("net_rates", [])
         spots = int(proposal.get("spots", 1))
+        
+        logger.info(f"[PROCESS] Processing proposal {idx + 1}:")
+        logger.info(f"[PROCESS]   Location: '{location}'")
+        logger.info(f"[PROCESS]   Start date: {start_date}")
+        logger.info(f"[PROCESS]   Durations: {durations}")
+        logger.info(f"[PROCESS]   Net rates: {net_rates}")
+        logger.info(f"[PROCESS]   Spots: {spots}")
 
         mapping = config.get_location_mapping()
+        logger.info(f"[PROCESS] Available location mappings: {list(mapping.keys())}")
+        
         matched_key = None
         for key in mapping.keys():
             if key in location or location in key:
                 matched_key = key
+                logger.info(f"[PROCESS] Matched '{location}' to '{key}'")
                 break
+        
         if not matched_key:
+            logger.error(f"[PROCESS] No match found for location '{location}'")
             return {"success": False, "error": f"Unknown location '{location}' in proposal {idx + 1}"}
 
         if len(durations) != len(net_rates):

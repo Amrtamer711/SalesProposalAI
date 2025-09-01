@@ -115,6 +115,7 @@ def _parse_metadata_file(folder: Path) -> Dict[str, object]:
 
 
 def _discover_templates() -> Tuple[Dict[str, str], List[str]]:
+    logger.info(f"[DISCOVER] Starting template discovery in '{TEMPLATES_DIR}'")
     key_to_relpath: Dict[str, str] = {}
     display_names: List[str] = []
 
@@ -123,8 +124,10 @@ def _discover_templates() -> Tuple[Dict[str, str], List[str]]:
     LOCATION_METADATA.clear()
 
     if not TEMPLATES_DIR.exists():
+        logger.warning(f"[DISCOVER] Templates directory does not exist: '{TEMPLATES_DIR}'")
         return key_to_relpath, display_names
 
+    logger.info(f"[DISCOVER] Scanning for PPTX files in '{TEMPLATES_DIR}'")
     for pptx_path in TEMPLATES_DIR.rglob("*.pptx"):
         try:
             rel_path = pptx_path.relative_to(TEMPLATES_DIR)
@@ -132,8 +135,11 @@ def _discover_templates() -> Tuple[Dict[str, str], List[str]]:
             rel_path = pptx_path
         key = _normalize_key(pptx_path.stem)
         key_to_relpath[key] = str(rel_path)
+        logger.info(f"[DISCOVER] Found template: '{pptx_path}' -> key: '{key}'")
 
         meta = _parse_metadata_file(pptx_path.parent)
+        logger.info(f"[DISCOVER] Metadata for '{key}': {meta}")
+        
         display_name = meta.get("display_name") or pptx_path.stem
         description = meta.get("description") or f"{pptx_path.stem} - Digital Display - 1 Spot - 16 Seconds - 16.6% SOV - Total Loop is 6 spots"
         upload_fee = meta.get("upload_fee") or 3000
@@ -150,21 +156,31 @@ def _discover_templates() -> Tuple[Dict[str, str], List[str]]:
             "pptx_rel_path": str(rel_path),
         }
 
+    logger.info(f"[DISCOVER] Discovery complete. Found {len(key_to_relpath)} templates")
+    logger.info(f"[DISCOVER] Location keys: {list(key_to_relpath.keys())}")
+    logger.info(f"[DISCOVER] Display names: {display_names}")
     return key_to_relpath, display_names
 
 
 def refresh_templates() -> None:
     global _MAPPING_CACHE, _DISPLAY_CACHE
+    logger.info("[REFRESH] Refreshing templates cache")
     mapping, names = _discover_templates()
     _MAPPING_CACHE = mapping
     _DISPLAY_CACHE = names
-    logger.info("Templates cache refreshed: %d templates", len(mapping))
+    logger.info(f"[REFRESH] Templates cache refreshed: {len(mapping)} templates")
+    logger.info(f"[REFRESH] Cached mapping: {mapping}")
+    logger.info(f"[REFRESH] Upload fees: {UPLOAD_FEES_MAPPING}")
+    logger.info(f"[REFRESH] Location metadata: {LOCATION_METADATA}")
 
 
 def get_location_mapping() -> Dict[str, str]:
     global _MAPPING_CACHE
     if _MAPPING_CACHE is None:
+        logger.info("[GET_MAPPING] Cache is empty, refreshing templates")
         refresh_templates()
+    else:
+        logger.info(f"[GET_MAPPING] Using cached mapping with {len(_MAPPING_CACHE)} entries")
     return _MAPPING_CACHE or {}
 
 

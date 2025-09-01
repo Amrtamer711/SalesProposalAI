@@ -108,10 +108,18 @@ def build_location_text(location_key: str, spots: int) -> str:
     """Build a location description using metadata, adjusting SOV and spots.
     If metadata description includes SOV and Spot, replace them; otherwise append the info.
     """
+    logger = config.logger
+    logger.info(f"[BUILD_LOC_TEXT] Building text for location '{location_key}' with {spots} spots")
+    
     meta = config.LOCATION_METADATA.get(location_key.lower(), {})
+    logger.info(f"[BUILD_LOC_TEXT] Metadata for '{location_key}': {meta}")
+    
     base_desc = str(meta.get("description") or config.LOCATION_DETAILS.get(location_key.lower(), location_key.title()))
     base_sov = float(meta.get("base_sov_percent", 16.6))
     effective_sov = base_sov * max(1, int(spots))
+    
+    logger.info(f"[BUILD_LOC_TEXT] Base description: '{base_desc}'")
+    logger.info(f"[BUILD_LOC_TEXT] Base SOV: {base_sov}%, Effective SOV: {effective_sov}%")
 
     import re
     desc = base_desc
@@ -123,11 +131,15 @@ def build_location_text(location_key: str, spots: int) -> str:
     # If no SOV found, append
     if re.search(r"%\s*SOV", desc, flags=re.IGNORECASE) is None:
         desc = desc.rstrip() + f" - {_spots_text(spots)} - {effective_sov:.1f}% SOV"
-
+    
+    logger.info(f"[BUILD_LOC_TEXT] Final description: '{desc}'")
     return desc
 
 
 def create_financial_proposal_slide(slide, financial_data: dict, slide_width, slide_height) -> Tuple[List[str], List[str]]:
+    logger = config.logger
+    logger.info(f"[CREATE_FINANCIAL] Creating financial slide with data: {financial_data}")
+    
     scale_x = slide_width / Inches(20)
     scale_y = slide_height / Inches(12)
     scale = min(scale_x, scale_y)
@@ -144,11 +156,15 @@ def create_financial_proposal_slide(slide, financial_data: dict, slide_width, sl
     durations = financial_data["durations"]
     net_rates = financial_data["net_rates"]
     spots = int(financial_data.get("spots", 1))
+    
+    logger.info(f"[CREATE_FINANCIAL] Location: '{location_name}', Spots: {spots}")
+    logger.info(f"[CREATE_FINANCIAL] Durations: {durations}, Net rates: {net_rates}")
 
     location_text = build_location_text(location_name, spots)
 
     upload_fee = config.UPLOAD_FEES_MAPPING.get(location_name.lower(), 3000)
     municipality_fee = 520
+    logger.info(f"[CREATE_FINANCIAL] Upload fee for '{location_name}': {upload_fee}")
 
     vat_amounts, total_amounts = _calc_vat_and_total_for_rates(net_rates, upload_fee, municipality_fee)
 
@@ -355,6 +371,11 @@ def create_financial_proposal_slide(slide, financial_data: dict, slide_width, sl
 
 
 def create_combined_financial_proposal_slide(slide, proposals_data: list, combined_net_rate: str, slide_width, slide_height) -> str:
+    logger = config.logger
+    logger.info(f"[CREATE_COMBINED] Creating combined slide for {len(proposals_data)} locations")
+    logger.info(f"[CREATE_COMBINED] Proposals data: {proposals_data}")
+    logger.info(f"[CREATE_COMBINED] Combined net rate: {combined_net_rate}")
+    
     scale_x = slide_width / Inches(20)
     scale_y = slide_height / Inches(12)
     scale = min(scale_x, scale_y)
@@ -391,14 +412,20 @@ def create_combined_financial_proposal_slide(slide, proposals_data: list, combin
     durations = []
     upload_fees = []
 
-    for proposal in proposals_data:
+    for idx, proposal in enumerate(proposals_data):
         loc_name = proposal["location"]
         spots = int(proposal.get("spots", 1))
-        locations.append(build_location_text(loc_name, spots))
+        logger.info(f"[CREATE_COMBINED] Processing location {idx + 1}: '{loc_name}' with {spots} spots")
+        
+        location_text = build_location_text(loc_name, spots)
+        locations.append(location_text)
         start_dates.append(proposal["start_date"])
         durations.append(proposal["durations"][0] if proposal["durations"] else "2 Weeks")
         upload_fee = config.UPLOAD_FEES_MAPPING.get(loc_name.lower(), 3000)
         upload_fees.append(f"AED {upload_fee:,}")
+        
+        logger.info(f"[CREATE_COMBINED] Location {idx + 1} text: '{location_text}'")
+        logger.info(f"[CREATE_COMBINED] Location {idx + 1} upload fee: {upload_fee}")
 
     municipality_fee = 520
     total_upload_fees = sum(config.UPLOAD_FEES_MAPPING.get(p["location"].lower(), 3000) for p in proposals_data)
