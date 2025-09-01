@@ -1,0 +1,33 @@
+envVarGroups:
+  - name: proposal-bot-shared
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.10.13"
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_SIGNING_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: "gpt-4.1"
+      - key: PDF_CONVERT_CONCURRENCY
+        value: "2"
+      - key: TEMPLATES_DIR
+        value: "/data/templates"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+services:
+  - type: web
+    name: proposal-bot
+    runtime: python
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - fromGroup: proposal-bot-shared
+    disk:
+      name: proposal-bot-data
+      mountPath: /data
+      sizeGB: 5 

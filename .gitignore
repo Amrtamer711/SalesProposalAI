@@ -24,8 +24,8 @@ Thumbs.db
 *.tmp
 *.temp
 
-# PowerPoint templates folder (will be on mounted disk)
-templates/
+# Data folder (templates, config, etc.)
+data/
 
 # Generated proposals
 *.pdf
