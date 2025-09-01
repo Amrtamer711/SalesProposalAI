@@ -1,5 +1,7 @@
 import asyncio
 from datetime import datetime
+import subprocess
+import shutil
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -10,6 +12,26 @@ from font_utils import install_custom_fonts
 
 # Install custom fonts on startup
 install_custom_fonts()
+
+# Check LibreOffice installation
+logger = config.logger
+logger.info("[STARTUP] Checking LibreOffice installation...")
+libreoffice_found = False
+for cmd in ['libreoffice', 'soffice', '/usr/bin/libreoffice']:
+    if shutil.which(cmd) or subprocess.run(['which', cmd], capture_output=True).returncode == 0:
+        try:
+            result = subprocess.run([cmd, '--version'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                logger.info(f"[STARTUP] LibreOffice found at '{cmd}': {result.stdout.strip()}")
+                libreoffice_found = True
+                break
+        except Exception as e:
+            logger.debug(f"[STARTUP] Error checking {cmd}: {e}")
+
+if not libreoffice_found:
+    logger.warning("[STARTUP] LibreOffice not found! PDF conversion will use fallback method.")
+else:
+    logger.info("[STARTUP] LibreOffice is ready for PDF conversion.")
 
 app = FastAPI(title="Proposal Bot API")
 

@@ -27,12 +27,14 @@ def convert_pptx_to_pdf(pptx_path: str) -> str:
     logger.info(f"[PDF_CONVERT] Operating system: {system}")
 
     libreoffice_paths = [
-        '/opt/homebrew/bin/soffice',
-        'soffice',
-        'libreoffice',
-        '/Applications/LibreOffice.app/Contents/MacOS/soffice',
-        '/usr/bin/libreoffice',
+        '/usr/bin/libreoffice',  # Docker/Linux standard location
+        '/usr/bin/soffice',      # Alternative name
+        '/opt/libreoffice/program/soffice',  # Some installations
         '/usr/local/bin/libreoffice',
+        '/opt/homebrew/bin/soffice',  # macOS homebrew
+        'libreoffice',  # PATH lookup
+        'soffice',      # PATH lookup
+        '/Applications/LibreOffice.app/Contents/MacOS/soffice',  # macOS
     ]
 
     for lo_path in libreoffice_paths:
@@ -48,10 +50,14 @@ def convert_pptx_to_pdf(pptx_path: str) -> str:
                     )
                     if os.path.exists(converted_pdf):
                         shutil.move(converted_pdf, pdf_file.name)
-                        logger.info(f"[PDF_CONVERT] Successfully converted using LibreOffice")
+                        logger.info(f"[PDF_CONVERT] Successfully converted using LibreOffice at '{lo_path}'")
                         return pdf_file.name
+                    else:
+                        logger.warning(f"[PDF_CONVERT] Converted file not found at expected location: {converted_pdf}")
                 else:
-                    logger.warning(f"[PDF_CONVERT] LibreOffice failed with code {result.returncode}: {result.stderr}")
+                    logger.warning(f"[PDF_CONVERT] LibreOffice at '{lo_path}' failed with code {result.returncode}")
+                    logger.warning(f"[PDF_CONVERT] stdout: {result.stdout}")
+                    logger.warning(f"[PDF_CONVERT] stderr: {result.stderr}")
             except Exception as e:
                 logger.debug(f"[PDF_CONVERT] LibreOffice conversion failed: {e}")
                 continue
