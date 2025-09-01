@@ -7,6 +7,7 @@ import aiohttp
 
 import config
 from proposals import process_proposals
+from slack_formatting import SlackResponses
 
 user_history: Dict[str, list] = {}
 
@@ -109,7 +110,7 @@ IMPORTANT: Use natural language in messages - say 'Sales Person' not 'sales_pers
     message = payload.get("message", "")
     fields = payload.get("fields", {})
 
-    await config.slack_client.chat_postMessage(channel=channel, text=message or f"Action: {action}")
+    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(message or f"Action: {action}"))
     return action
 
 
@@ -321,7 +322,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         res = await config.openai_client.responses.create(model=config.OPENAI_MODEL, input=messages, tools=tools, tool_choice="auto")
 
         if not res.output or len(res.output) == 0:
-            await config.slack_client.chat_postMessage(channel=channel, text="I can help with proposals or add locations. Say 'add location'.")
+            await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("I can help with proposals or add locations. Say 'add location'."))
             return
 
         msg = res.output[0]
@@ -336,7 +337,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 logger.info(f"[SEPARATE] Client: {client_name}, User: {user_id}")
 
                 if not proposals_data:
-                    await config.slack_client.chat_postMessage(channel=channel, text="❌ No proposals data provided")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** No proposals data provided"))
                     return
                 
                 result = await process_proposals(proposals_data, "separate", None, user_id, client_name)
@@ -352,13 +353,13 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 logger.info(f"[COMBINED] Client: {client_name}, User: {user_id}")
 
                 if not proposals_data:
-                    await config.slack_client.chat_postMessage(channel=channel, text="❌ No proposals data provided")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** No proposals data provided"))
                     return
                 elif not combined_net_rate:
-                    await config.slack_client.chat_postMessage(channel=channel, text="❌ Combined package requires a combined net rate")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** Combined package requires a combined net rate"))
                     return
                 elif len(proposals_data) < 2:
-                    await config.slack_client.chat_postMessage(channel=channel, text="❌ Combined package requires at least 2 locations")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** Combined package requires at least 2 locations"))
                     return
                 
                 # Transform proposals data for combined package (add durations as list with single item)
@@ -375,13 +376,13 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 if result["success"]:
                     if result.get("is_combined"):
                         logger.info(f"[RESULT] Combined package - PDF: {result.get('pdf_filename')}")
-                        await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=f"Combined package for {result['locations']}")
+                        await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=config.markdown_to_slack(f"📦 **Combined Package Proposal**\n📍 Locations: {result['locations']}"))
                         try: os.unlink(result["pdf_path"])  # type: ignore
                         except: pass
                     elif result.get("is_single"):
                         logger.info(f"[RESULT] Single proposal - Location: {result.get('location')}")
-                        await config.slack_client.files_upload_v2(channel=channel, file=result["pptx_path"], filename=result["pptx_filename"], initial_comment=f"PPT for {result['location']}")
-                        await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=f"PDF for {result['location']}")
+                        await config.slack_client.files_upload_v2(channel=channel, file=result["pptx_path"], filename=result["pptx_filename"], initial_comment=config.markdown_to_slack(f"📊 **PowerPoint Proposal**\n📍 Location: {result['location']}"))
+                        await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=config.markdown_to_slack(f"📄 **PDF Proposal**\n📍 Location: {result['location']}"))
                         try:
                             os.unlink(result["pptx_path"])  # type: ignore
                             os.unlink(result["pdf_path"])  # type: ignore
@@ -389,19 +390,19 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                     else:
                         logger.info(f"[RESULT] Multiple separate proposals - Count: {len(result.get('individual_files', []))}")
                         for f in result["individual_files"]:
-                            await config.slack_client.files_upload_v2(channel=channel, file=f["path"], filename=f["filename"], initial_comment=f"PPT for {f['location']}")
-                        await config.slack_client.files_upload_v2(channel=channel, file=result["merged_pdf_path"], filename=result["merged_pdf_filename"], initial_comment=f"Combined PDF for {result['locations']}")
+                            await config.slack_client.files_upload_v2(channel=channel, file=f["path"], filename=f["filename"], initial_comment=config.markdown_to_slack(f"📊 **PowerPoint Proposal**\n📍 Location: {f['location']}"))
+                        await config.slack_client.files_upload_v2(channel=channel, file=result["merged_pdf_path"], filename=result["merged_pdf_filename"], initial_comment=config.markdown_to_slack(f"📄 **Combined PDF**\n📍 All Locations: {result['locations']}"))
                         try:
                             for f in result["individual_files"]: os.unlink(f["path"])  # type: ignore
                             os.unlink(result["merged_pdf_path"])  # type: ignore
                         except: pass
                 else:
                     logger.error(f"[RESULT] Error: {result.get('error')}")
-                    await config.slack_client.chat_postMessage(channel=channel, text=f"❌ {result['error']}")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"❌ **Error:** {result['error']}"))
 
             elif msg.name == "refresh_templates":
                 config.refresh_templates()
-                await config.slack_client.chat_postMessage(channel=channel, text="🔄 Templates refreshed.")
+                await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("✅ Templates refreshed successfully."))
 
             elif msg.name == "edit_task_flow":
                 args = json.loads(msg.arguments)
@@ -412,7 +413,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
             elif msg.name == "add_location":
                 # Permission gate
                 if not config.can_manage_locations(user_id):
-                    await config.slack_client.chat_postMessage(channel=channel, text="❌ You are not authorized to manage locations.")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** You are not authorized to manage locations."))
                     return
 
                 args = json.loads(msg.arguments)
@@ -420,12 +421,12 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 confirm = bool(args.get("confirm", False))
 
                 if not location_key:
-                    await config.slack_client.chat_postMessage(channel=channel, text="Please provide a short key for the location (e.g., 'oryx').")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("Please provide a short key for the location (e.g., `oryx`)."))
                     return
 
                 mapping = config.get_location_mapping()
                 if location_key in mapping:
-                    await config.slack_client.chat_postMessage(channel=channel, text=f"I already have a location '{location_key}'. Reply 'confirm overwrite' to replace it or provide a different key.")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"⚠️ I already have a location `{location_key}`. Reply **'confirm overwrite'** to replace it or provide a different key."))
                     return
 
                 pptx_temp = None
@@ -441,31 +442,40 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                             except: pass
 
                 if not pptx_temp or not metadata_text:
-                    await config.slack_client.chat_postMessage(channel=channel, text="Upload both the PPTX and a metadata.txt in the same message, then say 'add location <key>'.")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("📎 Please upload both:\n• The PPTX template file\n• A metadata.txt file\n\nThen say `add location <key>` to save them."))
                     return
 
                 if not confirm:
-                    await config.slack_client.chat_postMessage(channel=channel, text=f"Ready to add '{location_key}'. Reply 'confirm' to proceed or 'cancel'.")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"✅ Ready to add location `{location_key}`.\n\nReply **'confirm'** to proceed or **'cancel'** to abort."))
                     return
 
                 await _persist_location_upload(location_key, pptx_temp, metadata_text)
                 config.refresh_templates()
-                await config.slack_client.chat_postMessage(channel=channel, text=f"✅ Added location '{location_key}'. You can use it in proposals now.")
+                await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"✅ Successfully added location `{location_key}`. You can now use it in proposals."))
 
             elif msg.name == "list_locations":
                 names = config.available_location_names()
                 if not names:
-                    await config.slack_client.chat_postMessage(channel=channel, text="No locations available. Use 'add location' to add one.")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("📍 No locations available. Use **'add location'** to add one."))
                 else:
                     listing = "\n".join(f"• {n}" for n in names)
-                    await config.slack_client.chat_postMessage(channel=channel, text=f"Current locations:\n{listing}")
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"📍 **Current locations:**\n{listing}"))
 
         else:
             reply = msg.content[-1].text if hasattr(msg, 'content') and msg.content else "How can I help you today?"
-            await config.slack_client.chat_postMessage(channel=channel, text=reply)
+            # Format any markdown-style text from the LLM
+            formatted_reply = reply
+            # Ensure bullet points are properly formatted
+            formatted_reply = formatted_reply.replace('\n- ', '\n• ')
+            formatted_reply = formatted_reply.replace('\n* ', '\n• ')
+            # Ensure headers are bolded
+            import re
+            formatted_reply = re.sub(r'^(For .+:)$', r'**\1**', formatted_reply, flags=re.MULTILINE)
+            formatted_reply = re.sub(r'^([A-Z][A-Z\s]+:)$', r'**\1**', formatted_reply, flags=re.MULTILINE)
+            await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(formatted_reply))
 
         user_history[user_id] = history[-10:]
 
     except Exception as e:
         config.logger.error(f"LLM loop error: {e}", exc_info=True)
-        await config.slack_client.chat_postMessage(channel=channel, text="❌ Something went wrong. Please try again.") 
+        await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** Something went wrong. Please try again.")) 

@@ -188,4 +188,48 @@ def available_location_names() -> List[str]:
     global _DISPLAY_CACHE
     if _DISPLAY_CACHE is None:
         refresh_templates()
-    return _DISPLAY_CACHE or [] 
+    return _DISPLAY_CACHE or []
+
+
+def markdown_to_slack(text: str) -> str:
+    """Convert markdown formatting to Slack's mrkdwn format.
+    
+    Handles common markdown patterns and converts them to Slack equivalents:
+    - **bold** -> *bold*
+    - *italic* -> _italic_
+    - ***bold italic*** -> *_bold italic_*
+    - `code` -> `code`
+    - ```code block``` -> ```code block```
+    - [link](url) -> <url|link>
+    - # Header -> *Header*
+    - ## Subheader -> *Subheader*
+    - - bullet -> • bullet
+    - 1. numbered -> 1. numbered
+    """
+    import re
+    
+    # Convert headers
+    text = re.sub(r'^### (.+)$', r'*\1*', text, flags=re.MULTILINE)
+    text = re.sub(r'^## (.+)$', r'*\1*', text, flags=re.MULTILINE)
+    text = re.sub(r'^# (.+)$', r'*\1*', text, flags=re.MULTILINE)
+    
+    # Convert bold italic (must come before bold/italic)
+    text = re.sub(r'\*\*\*(.+?)\*\*\*', r'*_\1_*', text)
+    
+    # Convert bold
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    
+    # Convert italic (but not already converted bold)
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'_\1_', text)
+    
+    # Convert links
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<\2|\1>', text)
+    
+    # Convert bullet points
+    text = re.sub(r'^- ', '• ', text, flags=re.MULTILINE)
+    text = re.sub(r'^\* ', '• ', text, flags=re.MULTILINE)
+    
+    # Ensure proper line breaks for lists
+    text = re.sub(r'\n(?=\d+\.|•)', '\n', text)
+    
+    return text 
