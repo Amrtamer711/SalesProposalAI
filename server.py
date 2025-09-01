@@ -6,6 +6,10 @@ from fastapi.responses import JSONResponse
 
 import config
 from llm import main_llm_loop
+from font_utils import install_custom_fonts
+
+# Install custom fonts on startup
+install_custom_fonts()
 
 app = FastAPI(title="Proposal Bot API")
 
