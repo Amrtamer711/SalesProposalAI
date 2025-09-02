@@ -8,8 +8,6 @@ import asyncio
 
 from pypdf import PdfWriter, PdfReader
 from pptx import Presentation
-from pptx.util import Inches
-import io
 
 import config
 
@@ -214,100 +212,4 @@ async def remove_slides_and_convert_to_pdf(pptx_path: str, remove_first: bool = 
             os.unlink(temp_pptx.name)
         except:
             pass
-        return pdf_path
-
-
-def prepare_pptx_with_slides_removed(pptx_path: str, remove_first: bool = False, remove_last: bool = False) -> str:
-    """Create a copy of PPTX with specified slides removed."""
-    import shutil as _sh
-    import tempfile as _tf
-    
-    logger = config.logger
-    logger.info(f"[PREPARE_PPTX] Processing '{pptx_path}'")
-    logger.info(f"[PREPARE_PPTX] Remove first: {remove_first}, Remove last: {remove_last}")
-    
-    temp_pptx = _tf.NamedTemporaryFile(delete=False, suffix=".pptx")
-    temp_pptx.close()
-    _sh.copy2(pptx_path, temp_pptx.name)
-    
-    pres = Presentation(temp_pptx.name)
-    xml_slides = pres.slides._sldIdLst
-    slides_to_remove = []
-    
-    if remove_first and len(pres.slides) > 0:
-        slides_to_remove.append(list(xml_slides)[0])
-    if remove_last and len(pres.slides) > 1:
-        slides_to_remove.append(list(xml_slides)[-1])
-    
-    for slide_id in slides_to_remove:
-        if slide_id in xml_slides:
-            xml_slides.remove(slide_id)
-    
-    pres.save(temp_pptx.name)
-    logger.info(f"[PREPARE_PPTX] Saved modified PPTX to: '{temp_pptx.name}'")
-    return temp_pptx.name
-
-
-def merge_pptx_files(pptx_files: list) -> str:
-    """Merge multiple PowerPoint files by concatenating their slides."""
-    logger = config.logger
-    logger.info(f"[PPTX_MERGE] Merging {len(pptx_files)} PowerPoint files")
-    
-    if not pptx_files:
-        raise ValueError("No PowerPoint files provided")
-    
-    output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-    output_file.close()
-    logger.info(f"[PPTX_MERGE] Output file: '{output_file.name}'")
-    
-    # Create a new presentation
-    merged_pres = Presentation()
-    
-    # Remove default blank slide
-    xml_slides = merged_pres.slides._sldIdLst
-    slides_to_remove = list(xml_slides)
-    for slide_id in slides_to_remove:
-        xml_slides.remove(slide_id)
-    
-    # Copy settings from first presentation
-    first_pres = Presentation(pptx_files[0])
-    merged_pres.slide_width = first_pres.slide_width
-    merged_pres.slide_height = first_pres.slide_height
-    
-    # Add slides from all presentations
-    for pptx_idx, pptx_path in enumerate(pptx_files):
-        logger.info(f"[PPTX_MERGE] Processing file {pptx_idx + 1}: '{pptx_path}'")
-        source_pres = Presentation(pptx_path)
-        
-        for slide_idx, slide in enumerate(source_pres.slides):
-            # Try to get matching layout
-            slide_layout_idx = 6  # Default to blank
-            try:
-                for idx, layout in enumerate(source_pres.slide_layouts):
-                    if layout == slide.slide_layout:
-                        slide_layout_idx = idx
-                        break
-            except:
-                pass
-            
-            # Use corresponding layout or blank
-            if slide_layout_idx < len(merged_pres.slide_layouts):
-                new_layout = merged_pres.slide_layouts[slide_layout_idx]
-            else:
-                new_layout = merged_pres.slide_layouts[6] if len(merged_pres.slide_layouts) > 6 else merged_pres.slide_layouts[0]
-            
-            # Add slide with layout
-            new_slide = merged_pres.slides.add_slide(new_layout)
-            
-            # Copy slide content by replacing the XML
-            # This preserves most formatting and content
-            try:
-                new_slide._element.clear()
-                for element in slide._element:
-                    new_slide._element.append(element)
-            except Exception as e:
-                logger.warning(f"[PPTX_MERGE] Could not copy slide {slide_idx} content: {e}")
-    
-    merged_pres.save(output_file.name)
-    logger.info(f"[PPTX_MERGE] Successfully merged to '{output_file.name}' with {len(merged_pres.slides)} slides")
-    return output_file.name 
+        return pdf_path 
