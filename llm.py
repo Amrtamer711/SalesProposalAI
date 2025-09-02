@@ -672,7 +672,11 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
             
             elif msg.name == "export_proposals_to_excel":
                 # Admin permission gate
-                if not config.is_admin(user_id):
+                logger.info(f"[EXCEL_EXPORT] Checking admin privileges for user: {user_id}")
+                is_admin_user = config.is_admin(user_id)
+                logger.info(f"[EXCEL_EXPORT] User {user_id} admin status: {is_admin_user}")
+                
+                if not is_admin_user:
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** You need admin privileges to export the database."))
                     return
                     
