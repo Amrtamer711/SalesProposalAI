@@ -251,14 +251,14 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
         intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
         intro_pptx.close()
         _extract_slide(intro_outro_template, 0, intro_pptx.name)
-        intro_pdf = await convert_pptx_to_pdf(intro_pptx.name)
+        intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
         
         # Create outro (last slide only)
         outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
         outro_pptx.close()
         outro_pres = Presentation(intro_outro_template)
         _extract_slide(intro_outro_template, len(outro_pres.slides) - 1, outro_pptx.name)
-        outro_pdf = await convert_pptx_to_pdf(outro_pptx.name)
+        outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
         
         # Insert intro at beginning and outro at end
         pdf_files.insert(0, intro_pdf)
@@ -425,14 +425,14 @@ async def process_proposals(
             intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
             intro_pptx.close()
             _extract_slide(intro_outro_template, 0, intro_pptx.name)
-            intro_pdf = await convert_pptx_to_pdf(intro_pptx.name)
+            intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
             
             # Create outro (last slide only)
             outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
             outro_pptx.close()
             outro_pres = Presentation(intro_outro_template)
             _extract_slide(intro_outro_template, len(outro_pres.slides) - 1, outro_pptx.name)
-            outro_pdf = await convert_pptx_to_pdf(outro_pptx.name)
+            outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
             
             # Insert intro at beginning and outro at end
             pdf_files.insert(0, intro_pdf)
