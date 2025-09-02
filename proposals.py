@@ -1,7 +1,9 @@
 import os
 import asyncio
+import tempfile
+import shutil
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
 from pptx import Presentation
 
@@ -17,6 +19,89 @@ def _template_path_for_key(key: str) -> Path:
     if not filename:
         raise FileNotFoundError(f"Unknown location '{key}'. Available: {', '.join(config.available_location_names())}")
     return config.TEMPLATES_DIR / filename
+
+
+def _extract_slide(source_pptx: str, slide_index: int, output_pptx: str) -> None:
+    """Extract a single slide from a presentation and save as new presentation."""
+    source_pres = Presentation(source_pptx)
+    dest_pres = Presentation()
+    
+    # Remove the default blank slide
+    xml_slides = dest_pres.slides._sldIdLst
+    slides_to_remove = list(xml_slides)
+    for slide_id in slides_to_remove:
+        xml_slides.remove(slide_id)
+    
+    # Copy slide layout and content
+    if 0 <= slide_index < len(source_pres.slides):
+        source_slide = source_pres.slides[slide_index]
+        
+        # Add a slide with the same layout
+        slide_layout_idx = 0
+        for idx, layout in enumerate(source_pres.slide_layouts):
+            if layout == source_slide.slide_layout:
+                slide_layout_idx = idx
+                break
+        
+        # Use blank layout as fallback
+        if slide_layout_idx < len(dest_pres.slide_layouts):
+            slide_layout = dest_pres.slide_layouts[slide_layout_idx]
+        else:
+            slide_layout = dest_pres.slide_layouts[6] if len(dest_pres.slide_layouts) > 6 else dest_pres.slide_layouts[0]
+        
+        # Import the slide
+        dest_slide = dest_pres.slides.add_slide(slide_layout)
+        
+        # Copy shapes
+        for shape in source_slide.shapes:
+            if shape.shape_type == 13:  # Picture
+                if hasattr(shape, 'image'):
+                    image_stream = shape.image.blob
+                    left = shape.left
+                    top = shape.top
+                    width = shape.width
+                    height = shape.height
+                    dest_slide.shapes.add_picture(image_stream, left, top, width, height)
+        
+        # Copy slide properties
+        dest_pres.slide_width = source_pres.slide_width
+        dest_pres.slide_height = source_pres.slide_height
+    
+    dest_pres.save(output_pptx)
+
+
+def _get_landmark_series_template(proposals_data: List[Dict[str, Any]]) -> Optional[str]:
+    """Find the first Landmark Series location in the proposals, or first location if none found."""
+    logger = config.logger
+    
+    # First, look for Landmark Series locations
+    for proposal in proposals_data:
+        location_key = proposal.get("location", "").lower().strip()
+        
+        # Match location key
+        mapping = config.get_location_mapping()
+        matched_key = None
+        for key in mapping.keys():
+            if key in location_key or location_key in key:
+                matched_key = key
+                break
+        
+        if matched_key:
+            location_meta = config.LOCATION_METADATA.get(matched_key, {})
+            if location_meta.get('series', '').lower() == 'the landmark series':
+                logger.info(f"[INTRO_OUTRO] Using Landmark Series location: {matched_key}")
+                return str(config.TEMPLATES_DIR / mapping[matched_key])
+    
+    # If no Landmark Series found, use the first location
+    if proposals_data:
+        first_location = proposals_data[0].get("location", "").lower().strip()
+        mapping = config.get_location_mapping()
+        for key in mapping.keys():
+            if key in first_location or first_location in key:
+                logger.info(f"[INTRO_OUTRO] No Landmark Series found, using first location: {key}")
+                return str(config.TEMPLATES_DIR / mapping[key])
+    
+    return None
 
 
 def create_proposal_with_template(source_path: str, financial_data: dict) -> Tuple[str, List[str], List[str]]:
@@ -107,13 +192,20 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
         if not durations:
             return {"success": False, "error": f"No duration specified for {matched_key}"}
 
-        validated_proposals.append({
+        validated_proposal = {
             "location": matched_key,
             "start_date": start_date,
             "durations": durations,
             "spots": spots,
             "filename": mapping[matched_key],
-        })
+        }
+        
+        # Add production fee if provided
+        production_fee = proposal.get("production_fee")
+        if production_fee:
+            validated_proposal["production_fee"] = production_fee
+            
+        validated_proposals.append(validated_proposal)
 
     loop = asyncio.get_event_loop()
     pdf_files: List[str] = []
@@ -149,6 +241,35 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
                 os.unlink(pptx_file)
             except:
                 pass
+    
+    # For combined proposals, create intro and outro slides
+    intro_outro_template = _get_landmark_series_template(validated_proposals)
+    if intro_outro_template:
+        logger.info(f"[COMBINED] Creating intro/outro from: {intro_outro_template}")
+        
+        # Create intro (first slide only)
+        intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+        intro_pptx.close()
+        _extract_slide(intro_outro_template, 0, intro_pptx.name)
+        intro_pdf = await convert_pptx_to_pdf(intro_pptx.name)
+        
+        # Create outro (last slide only)
+        outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+        outro_pptx.close()
+        outro_pres = Presentation(intro_outro_template)
+        _extract_slide(intro_outro_template, len(outro_pres.slides) - 1, outro_pptx.name)
+        outro_pdf = await convert_pptx_to_pdf(outro_pptx.name)
+        
+        # Insert intro at beginning and outro at end
+        pdf_files.insert(0, intro_pdf)
+        pdf_files.append(outro_pdf)
+        
+        # Clean up temp files
+        try:
+            os.unlink(intro_pptx.name)
+            os.unlink(outro_pptx.name)
+        except:
+            pass
 
     merged_pdf = await loop.run_in_executor(None, merge_pdfs, pdf_files)
     for pdf_file in pdf_files:
@@ -260,6 +381,11 @@ async def process_proposals(
             "net_rates": net_rates,
             "spots": spots,
         }
+        
+        # Add production fee if provided
+        production_fee = proposal.get("production_fee")
+        if production_fee:
+            financial_data["production_fee"] = production_fee
 
         pptx_file, vat_amounts, total_amounts = await loop.run_in_executor(None, create_proposal_with_template, str(src), financial_data)
 
@@ -288,6 +414,36 @@ async def process_proposals(
                 remove_first = True
             pdf_file = await remove_slides_and_convert_to_pdf(pptx_file, remove_first, remove_last)
             pdf_files.append(pdf_file)
+    
+    # For multiple proposals, create intro and outro slides
+    if len(pdf_files) > 1:
+        intro_outro_template = _get_landmark_series_template(proposals_data)
+        if intro_outro_template:
+            logger.info(f"[PROCESS] Creating intro/outro from: {intro_outro_template}")
+            
+            # Create intro (first slide only)
+            intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+            intro_pptx.close()
+            _extract_slide(intro_outro_template, 0, intro_pptx.name)
+            intro_pdf = await convert_pptx_to_pdf(intro_pptx.name)
+            
+            # Create outro (last slide only)
+            outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+            outro_pptx.close()
+            outro_pres = Presentation(intro_outro_template)
+            _extract_slide(intro_outro_template, len(outro_pres.slides) - 1, outro_pptx.name)
+            outro_pdf = await convert_pptx_to_pdf(outro_pptx.name)
+            
+            # Insert intro at beginning and outro at end
+            pdf_files.insert(0, intro_pdf)
+            pdf_files.append(outro_pdf)
+            
+            # Clean up temp files
+            try:
+                os.unlink(intro_pptx.name)
+                os.unlink(outro_pptx.name)
+            except:
+                pass
 
     if is_single:
         totals = individual_files[0].get("totals", [])

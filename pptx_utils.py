@@ -228,15 +228,33 @@ def create_financial_proposal_slide(slide, financial_data: dict, slide_width, sl
     durations = financial_data["durations"]
     net_rates = financial_data["net_rates"]
     spots = int(financial_data.get("spots", 1))
+    production_fee_str = financial_data.get("production_fee")
     
     logger.info(f"[CREATE_FINANCIAL] Location: '{location_name}', Spots: {spots}")
     logger.info(f"[CREATE_FINANCIAL] Durations: {durations}, Net rates: {net_rates}")
+    logger.info(f"[CREATE_FINANCIAL] Production fee: {production_fee_str}")
 
     location_text = build_location_text(location_name, spots)
 
-    upload_fee = config.UPLOAD_FEES_MAPPING.get(location_name.lower(), 3000)
+    # Check if location is static
+    location_meta = config.LOCATION_METADATA.get(location_name.lower(), {})
+    is_static = location_meta.get('display_type', '').lower() == 'static'
+    
+    if is_static and production_fee_str:
+        # Use production fee for static locations
+        fee_str = production_fee_str
+        fee_label = "Production Fee:"
+        # Parse production fee to get numeric value
+        production_fee = float(production_fee_str.replace("AED", "").replace(",", "").strip())
+        upload_fee = production_fee
+    else:
+        # Use upload fee for digital locations
+        upload_fee = config.UPLOAD_FEES_MAPPING.get(location_name.lower(), 3000)
+        fee_str = f"AED {upload_fee:,}"
+        fee_label = "Upload Fee:"
+    
     municipality_fee = 520
-    logger.info(f"[CREATE_FINANCIAL] Upload fee for '{location_name}': {upload_fee}")
+    logger.info(f"[CREATE_FINANCIAL] Fee for '{location_name}': {fee_str} (static: {is_static})")
 
     vat_amounts, total_amounts = _calc_vat_and_total_for_rates(net_rates, upload_fee, municipality_fee)
 
@@ -246,7 +264,7 @@ def create_financial_proposal_slide(slide, financial_data: dict, slide_width, sl
         ("Start Date:", start_date),
         ("Duration:", durations if len(durations) > 1 else durations[0]),
         ("Net Rate:", net_rates if len(net_rates) > 1 else net_rates[0]),
-        ("Upload Fee:", f"AED {upload_fee:,}"),
+        (fee_label, fee_str),
         ("Municipality Fee:", "AED 520 Per Image/Message"),
         ("VAT 5% :", vat_amounts if len(vat_amounts) > 1 else vat_amounts[0]),
         ("Total:", total_amounts if len(total_amounts) > 1 else total_amounts[0]),
@@ -483,24 +501,58 @@ def create_combined_financial_proposal_slide(slide, proposals_data: list, combin
     start_dates = []
     durations = []
     upload_fees = []
+    fee_label = "Upload Fee:"  # Default label
+    has_static = False
+    has_digital = False
+    total_fees = 0
 
     for idx, proposal in enumerate(proposals_data):
         loc_name = proposal["location"]
         spots = int(proposal.get("spots", 1))
+        production_fee_str = proposal.get("production_fee")
         logger.info(f"[CREATE_COMBINED] Processing location {idx + 1}: '{loc_name}' with {spots} spots")
         
         location_text = build_location_text(loc_name, spots)
         locations.append(location_text)
         start_dates.append(proposal["start_date"])
         durations.append(proposal["durations"][0] if proposal["durations"] else "2 Weeks")
-        upload_fee = config.UPLOAD_FEES_MAPPING.get(loc_name.lower(), 3000)
-        upload_fees.append(f"AED {upload_fee:,}")
+        
+        # Check if location is static
+        location_meta = config.LOCATION_METADATA.get(loc_name.lower(), {})
+        is_static = location_meta.get('display_type', '').lower() == 'static'
+        
+        if is_static:
+            has_static = True
+            if production_fee_str:
+                # Use production fee for static locations
+                upload_fees.append(production_fee_str)
+                # Parse production fee to get numeric value
+                fee_numeric = float(production_fee_str.replace("AED", "").replace(",", "").strip())
+                total_fees += fee_numeric
+            else:
+                # Fallback to stored fee
+                fee = config.UPLOAD_FEES_MAPPING.get(loc_name.lower(), 3000)
+                upload_fees.append(f"AED {fee:,}")
+                total_fees += fee
+        else:
+            has_digital = True
+            upload_fee = config.UPLOAD_FEES_MAPPING.get(loc_name.lower(), 3000)
+            upload_fees.append(f"AED {upload_fee:,}")
+            total_fees += upload_fee
         
         logger.info(f"[CREATE_COMBINED] Location {idx + 1} text: '{location_text}'")
-        logger.info(f"[CREATE_COMBINED] Location {idx + 1} upload fee: {upload_fee}")
+        logger.info(f"[CREATE_COMBINED] Location {idx + 1} fee: {upload_fees[-1]} (static: {is_static})")
+
+    # Determine fee label based on location types
+    if has_static and has_digital:
+        fee_label = "Upload/Production Fee:"
+    elif has_static:
+        fee_label = "Production Fee:"
+    else:
+        fee_label = "Upload Fee:"
 
     municipality_fee = 520
-    total_upload_fees = sum(config.UPLOAD_FEES_MAPPING.get(p["location"].lower(), 3000) for p in proposals_data)
+    total_upload_fees = total_fees  # Use calculated total fees
 
     net_rate_numeric = float(combined_net_rate.replace("AED", "").replace(",", "").strip())
     subtotal = net_rate_numeric + total_upload_fees + municipality_fee
@@ -513,7 +565,7 @@ def create_combined_financial_proposal_slide(slide, proposals_data: list, combin
         ("Start Date:", start_dates),
         ("Duration:", durations),
         ("Net Rate:", combined_net_rate),
-        ("Upload Fee:", upload_fees),
+        (fee_label, upload_fees),
         ("Municipality Fee:", "AED 520 Per Image/Message"),
         ("VAT 5% :", f"AED {vat:,.0f}"),
         ("Total:", f"AED {total:,.0f}"),

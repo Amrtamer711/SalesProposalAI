@@ -151,6 +151,14 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
     logger = config.logger
 
     available_names = ", ".join(config.available_location_names())
+    
+    # Get static locations for the prompt
+    static_locations = []
+    for key, meta in config.LOCATION_METADATA.items():
+        if meta.get('display_type', '').lower() == 'static':
+            static_locations.append(f"{key} ({meta.get('display_name', key)})")
+    
+    static_list = ", ".join(static_locations) if static_locations else "None"
 
     prompt = (
         f"You are a sales proposal bot for BackLite Media. You help create financial proposals for digital advertising locations.\n"
@@ -159,7 +167,8 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         f"1. SEPARATE PACKAGE (default): Each location gets its own proposal slide, multiple durations/rates allowed per location\n"
         f"2. COMBINED PACKAGE: All locations in ONE proposal slide, single duration per location, one combined net rate\n\n"
         
-        f"AVAILABLE LOCATIONS: {available_names}\n\n"
+        f"AVAILABLE LOCATIONS: {available_names}\n"
+        f"STATIC LOCATIONS (require production fee instead of upload fee): {static_list}\n\n"
         
         f"REQUIRED INFORMATION:\n"
         f"For SEPARATE PACKAGE (each location):\n"
@@ -167,15 +176,17 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         f"2. Start Date\n"
         f"3. Duration Options (multiple allowed)\n"
         f"4. Net Rates for EACH duration\n"
-        f"5. Client Name (required)\n"
-        f"6. Submitted By (optional - defaults to current user)\n\n"
+        f"5. Production Fee (required ONLY for static locations, e.g., 'AED 5,000')\n"
+        f"6. Client Name (required)\n"
+        f"7. Submitted By (optional - defaults to current user)\n\n"
         f"For COMBINED PACKAGE:\n"
         f"1. All Locations\n"
         f"2. Start Date for EACH location\n"
         f"3. ONE Duration per location\n"
         f"4. ONE Combined Net Rate for entire package\n"
-        f"5. Client Name (required)\n"
-        f"6. Submitted By (optional - defaults to current user)\n\n"
+        f"5. Production Fee for EACH static location (if any)\n"
+        f"6. Client Name (required)\n"
+        f"7. Submitted By (optional - defaults to current user)\n\n"
         
         f"MULTIPLE PROPOSALS RULES:\n"
         f"- User can request proposals for multiple locations at once\n"
@@ -244,6 +255,9 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         f"- Format all rates as 'AED X,XXX,XXX'\n"
         f"- Parse 'mil' or 'million' as 000,000 (e.g., '2 mil' = 'AED 2,000,000')\n"
         f"- Number of spots defaults to 1 if not specified\n"
+        f"- For STATIC locations: MUST collect production fee (replaces upload fee)\n"
+        f"- For DIGITAL locations: Use the pre-configured upload fee\n"
+        f"- In COMBINED packages with both static and digital: collect production fees for static only\n"
         f"- ALWAYS collect client name - it's required for tracking"
     )
 
@@ -277,7 +291,8 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                                     "items": {"type": "string"},
                                     "description": "List of net rates corresponding to each duration (e.g., ['AED 1,250,000', 'AED 2,300,000', 'AED 3,300,000'])"
                                 },
-                                "spots": {"type": "integer", "description": "Number of spots (default: 1)", "default": 1}
+                                "spots": {"type": "integer", "description": "Number of spots (default: 1)", "default": 1},
+                                "production_fee": {"type": "string", "description": "Production fee for static locations (e.g., 'AED 5,000'). Required for static locations."}
                             },
                             "required": ["location", "start_date", "durations", "net_rates"]
                         },
@@ -306,7 +321,8 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                                 "location": {"type": "string", "description": "The location name (e.g., landmark, gateway, oryx)"},
                                 "start_date": {"type": "string", "description": "Start date for this location (e.g., 1st January 2026)"},
                                 "duration": {"type": "string", "description": "Duration for this location (e.g., '2 Weeks')"},
-                                "spots": {"type": "integer", "description": "Number of spots (default: 1)", "default": 1}
+                                "spots": {"type": "integer", "description": "Number of spots (default: 1)", "default": 1},
+                                "production_fee": {"type": "string", "description": "Production fee for static locations (e.g., 'AED 5,000'). Required for static locations."}
                             },
                             "required": ["location", "start_date", "duration"]
                         },
