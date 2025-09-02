@@ -14,12 +14,25 @@ load_dotenv()
 
 # Base paths
 BASE_DIR = Path(__file__).parent
-TEMPLATES_DIR = Path(os.getenv("TEMPLATES_DIR", str(BASE_DIR / "data" / "templates")))
-HOS_CONFIG_FILE = BASE_DIR / "data" / "hos_config.json"
 
-# Logger
+# Logger (set up early so we can use it)
 logger = logging.getLogger("proposal-bot")
 logging.basicConfig(level=logging.INFO)
+
+# Use /data/ in production, local paths in development
+if os.path.exists("/data/"):
+    # Production paths
+    TEMPLATES_DIR = Path(os.getenv("TEMPLATES_DIR", "/data/templates"))
+    HOS_CONFIG_FILE = Path("/data/hos_config.json")
+    logger.info("[STARTUP] Running in PRODUCTION mode - using /data/ paths")
+else:
+    # Development paths
+    TEMPLATES_DIR = Path(os.getenv("TEMPLATES_DIR", str(BASE_DIR / "data" / "templates")))
+    HOS_CONFIG_FILE = BASE_DIR / "data" / "hos_config.json"
+    logger.info("[STARTUP] Running in DEVELOPMENT mode - using local paths")
+
+logger.info(f"[STARTUP] Templates directory: {TEMPLATES_DIR}")
+logger.info(f"[STARTUP] HOS config file: {HOS_CONFIG_FILE}")
 
 # Clients and config
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
@@ -48,26 +61,12 @@ def load_hos_config() -> None:
     global _HOS_CONFIG
     try:
         logger.info(f"[HOS_CONFIG] Looking for config at: {HOS_CONFIG_FILE}")
-        logger.info(f"[HOS_CONFIG] File exists: {HOS_CONFIG_FILE.exists()}")
-        
-        # Try multiple locations
-        possible_paths = [
-            HOS_CONFIG_FILE,  # Original path
-            Path("/data/hos_config.json"),  # Absolute path in production
-            Path("./data/hos_config.json"),  # Relative path
-        ]
-        
-        config_loaded = False
-        for path in possible_paths:
-            if path.exists():
-                logger.info(f"[HOS_CONFIG] Found config at: {path}")
-                _HOS_CONFIG = json.loads(path.read_text(encoding="utf-8"))
-                logger.info(f"[HOS_CONFIG] Loaded config: {list(_HOS_CONFIG.keys())}")
-                config_loaded = True
-                break
-        
-        if not config_loaded:
-            logger.warning(f"[HOS_CONFIG] Config file not found in any location")
+        if HOS_CONFIG_FILE.exists():
+            logger.info(f"[HOS_CONFIG] Found config at: {HOS_CONFIG_FILE}")
+            _HOS_CONFIG = json.loads(HOS_CONFIG_FILE.read_text(encoding="utf-8"))
+            logger.info(f"[HOS_CONFIG] Loaded config: {list(_HOS_CONFIG.keys())}")
+        else:
+            logger.warning(f"[HOS_CONFIG] Config file not found at: {HOS_CONFIG_FILE}")
             _HOS_CONFIG = {}
     except Exception as e:
         logger.warning(f"Failed to load hos_config.json: {e}")

@@ -2,8 +2,18 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
+import os
+import logging
 
-DB_PATH = Path(__file__).parent / "proposals.db"
+logger = logging.getLogger("proposal-bot")
+
+# Use /data/ in production, local path in development
+if os.path.exists("/data/"):
+    DB_PATH = Path("/data/proposals.db")
+    logger.info("[DB] Using production database at /data/proposals.db")
+else:
+    DB_PATH = Path(__file__).parent / "proposals.db"
+    logger.info(f"[DB] Using development database at {DB_PATH}")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS proposals_log (
