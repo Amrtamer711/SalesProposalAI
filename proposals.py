@@ -21,68 +21,6 @@ def _template_path_for_key(key: str) -> Path:
     return config.TEMPLATES_DIR / filename
 
 
-def _extract_slide(source_pptx: str, slide_index: int, output_pptx: str) -> None:
-    """Extract a single slide from a presentation and save as new presentation."""
-    import io
-    
-    source_pres = Presentation(source_pptx)
-    dest_pres = Presentation()
-    
-    # Remove the default blank slide
-    xml_slides = dest_pres.slides._sldIdLst
-    slides_to_remove = list(xml_slides)
-    for slide_id in slides_to_remove:
-        xml_slides.remove(slide_id)
-    
-    # Copy slide layout and content
-    if 0 <= slide_index < len(source_pres.slides):
-        source_slide = source_pres.slides[slide_index]
-        
-        # Add a blank slide
-        slide_layout = dest_pres.slide_layouts[6] if len(dest_pres.slide_layouts) > 6 else dest_pres.slide_layouts[0]
-        dest_slide = dest_pres.slides.add_slide(slide_layout)
-        
-        # Copy all shapes
-        for shape in source_slide.shapes:
-            try:
-                if shape.shape_type == 13:  # Picture
-                    if hasattr(shape, 'image'):
-                        image_stream = io.BytesIO(shape.image.blob)
-                        left = shape.left
-                        top = shape.top
-                        width = shape.width
-                        height = shape.height
-                        dest_slide.shapes.add_picture(image_stream, left, top, width, height)
-                elif hasattr(shape, 'text'):  # Text shape
-                    # Add text box
-                    left = shape.left
-                    top = shape.top
-                    width = shape.width
-                    height = shape.height
-                    textbox = dest_slide.shapes.add_textbox(left, top, width, height)
-                    text_frame = textbox.text_frame
-                    
-                    # Copy text content
-                    if shape.text:
-                        text_frame.text = shape.text
-                        
-                    # Try to copy text formatting
-                    if hasattr(shape, 'text_frame') and shape.text_frame:
-                        text_frame.word_wrap = shape.text_frame.word_wrap
-                        if hasattr(shape.text_frame, 'margin_left'):
-                            text_frame.margin_left = shape.text_frame.margin_left
-                            text_frame.margin_right = shape.text_frame.margin_right
-                            text_frame.margin_top = shape.text_frame.margin_top
-                            text_frame.margin_bottom = shape.text_frame.margin_bottom
-            except Exception as e:
-                config.logger.warning(f"[EXTRACT_SLIDE] Could not copy shape: {e}")
-                continue
-        
-        # Copy slide properties
-        dest_pres.slide_width = source_pres.slide_width
-        dest_pres.slide_height = source_pres.slide_height
-    
-    dest_pres.save(output_pptx)
 
 
 def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Optional[str]:
@@ -264,17 +202,34 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
     if intro_outro_template:
         logger.info(f"[COMBINED] Creating intro/outro from: {intro_outro_template}")
         
-        # Create intro (first slide only)
+        # Create intro by keeping only the first slide
         intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
         intro_pptx.close()
-        _extract_slide(intro_outro_template, 0, intro_pptx.name)
+        shutil.copy2(intro_outro_template, intro_pptx.name)
+        
+        # Remove all slides except the first
+        pres = Presentation(intro_pptx.name)
+        xml_slides = pres.slides._sldIdLst
+        slides_to_remove = list(xml_slides)[1:]  # All slides except first
+        for slide_id in slides_to_remove:
+            xml_slides.remove(slide_id)
+        pres.save(intro_pptx.name)
+        
         intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
         
-        # Create outro (last slide only)
+        # Create outro by keeping only the last slide
         outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
         outro_pptx.close()
-        outro_pres = Presentation(intro_outro_template)
-        _extract_slide(intro_outro_template, len(outro_pres.slides) - 1, outro_pptx.name)
+        shutil.copy2(intro_outro_template, outro_pptx.name)
+        
+        # Remove all slides except the last
+        pres = Presentation(outro_pptx.name)
+        xml_slides = pres.slides._sldIdLst
+        slides_to_remove = list(xml_slides)[:-1]  # All slides except last
+        for slide_id in slides_to_remove:
+            xml_slides.remove(slide_id)
+        pres.save(outro_pptx.name)
+        
         outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
         
         # Insert intro at beginning and outro at end
@@ -438,17 +393,34 @@ async def process_proposals(
         if intro_outro_template:
             logger.info(f"[PROCESS] Creating intro/outro from: {intro_outro_template}")
             
-            # Create intro (first slide only)
+            # Create intro by keeping only the first slide
             intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
             intro_pptx.close()
-            _extract_slide(intro_outro_template, 0, intro_pptx.name)
+            shutil.copy2(intro_outro_template, intro_pptx.name)
+            
+            # Remove all slides except the first
+            pres = Presentation(intro_pptx.name)
+            xml_slides = pres.slides._sldIdLst
+            slides_to_remove = list(xml_slides)[1:]  # All slides except first
+            for slide_id in slides_to_remove:
+                xml_slides.remove(slide_id)
+            pres.save(intro_pptx.name)
+            
             intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
             
-            # Create outro (last slide only)
+            # Create outro by keeping only the last slide
             outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
             outro_pptx.close()
-            outro_pres = Presentation(intro_outro_template)
-            _extract_slide(intro_outro_template, len(outro_pres.slides) - 1, outro_pptx.name)
+            shutil.copy2(intro_outro_template, outro_pptx.name)
+            
+            # Remove all slides except the last
+            pres = Presentation(outro_pptx.name)
+            xml_slides = pres.slides._sldIdLst
+            slides_to_remove = list(xml_slides)[:-1]  # All slides except last
+            for slide_id in slides_to_remove:
+                xml_slides.remove(slide_id)
+            pres.save(outro_pptx.name)
+            
             outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
             
             # Insert intro at beginning and outro at end
