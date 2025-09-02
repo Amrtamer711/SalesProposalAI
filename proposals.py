@@ -141,12 +141,14 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
         logger.info(f"[COMBINED]   Durations: {durations}")
         logger.info(f"[COMBINED]   Spots: {spots}")
 
+        # Get the mapping first (we'll need it later)
+        mapping = config.get_location_mapping()
+        
         # First try to get key from display name
         matched_key = config.get_location_key_from_display_name(location)
         
         # If that didn't work, try the old matching logic
         if not matched_key:
-            mapping = config.get_location_mapping()
             logger.info(f"[COMBINED] Available mappings: {list(mapping.keys())}")
             
             for key in mapping.keys():
@@ -352,12 +354,14 @@ async def process_proposals(
         logger.info(f"[PROCESS]   Net rates: {net_rates}")
         logger.info(f"[PROCESS]   Spots: {spots}")
 
+        # Get the mapping first (we'll need it later)
+        mapping = config.get_location_mapping()
+        
         # First try to get key from display name
         matched_key = config.get_location_key_from_display_name(location)
         
         # If that didn't work, try the old matching logic
         if not matched_key:
-            mapping = config.get_location_mapping()
             logger.info(f"[PROCESS] Available location mappings: {list(mapping.keys())}")
             
             for key in mapping.keys():
