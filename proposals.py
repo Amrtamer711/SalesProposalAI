@@ -10,7 +10,7 @@ from pptx import Presentation
 import config
 import db
 from pptx_utils import create_financial_proposal_slide, create_combined_financial_proposal_slide
-from pdf_utils import convert_pptx_to_pdf, merge_pdfs, remove_slides_and_convert_to_pdf
+from pdf_utils import convert_pptx_to_pdf, merge_pdfs, remove_slides_and_convert_to_pdf, prepare_pptx_with_slides_removed, merge_pptx_files
 
 
 def _template_path_for_key(key: str) -> Path:
@@ -410,7 +410,14 @@ async def process_proposals(
         locations.append(matched_key.title())
 
         if is_single:
-            pdf_file = await loop.run_in_executor(None, convert_pptx_to_pdf, pptx_file)
+            # For single proposals, create a formatted PPTX without first/last slides
+            formatted_pptx = await loop.run_in_executor(None, prepare_pptx_with_slides_removed, pptx_file, True, True)
+            
+            # Convert the formatted PPTX to PDF
+            pdf_file = await loop.run_in_executor(None, convert_pptx_to_pdf, formatted_pptx)
+            
+            individual_files[0]["formatted_pptx_path"] = formatted_pptx
+            individual_files[0]["formatted_pptx_filename"] = f"{matched_key.title()}_Proposal_Formatted.pptx"
             individual_files[0]["pdf_path"] = pdf_file
             individual_files[0]["pdf_filename"] = f"{matched_key.title()}_Proposal.pdf"
         else:
@@ -491,9 +498,11 @@ async def process_proposals(
             "success": True,
             "is_single": True,
             "pptx_path": individual_files[0]["path"],
+            "formatted_pptx_path": individual_files[0]["formatted_pptx_path"],
             "pdf_path": individual_files[0]["pdf_path"],
             "location": individual_files[0]["location"],
             "pptx_filename": individual_files[0]["filename"],
+            "formatted_pptx_filename": individual_files[0]["formatted_pptx_filename"],
             "pdf_filename": individual_files[0]["pdf_filename"],
         }
 

@@ -442,10 +442,13 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                         except: pass
                     elif result.get("is_single"):
                         logger.info(f"[RESULT] Single proposal - Location: {result.get('location')}")
-                        await config.slack_client.files_upload_v2(channel=channel, file=result["pptx_path"], filename=result["pptx_filename"], initial_comment=config.markdown_to_slack(f"📊 **PowerPoint Proposal**\n📍 Location: {result['location']}"))
+                        # Send the formatted PPTX (with slides removed)
+                        await config.slack_client.files_upload_v2(channel=channel, file=result["formatted_pptx_path"], filename=result["formatted_pptx_filename"], initial_comment=config.markdown_to_slack(f"📊 **PowerPoint Proposal (Formatted)**\n📍 Location: {result['location']}"))
+                        # Send the PDF
                         await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=config.markdown_to_slack(f"📄 **PDF Proposal**\n📍 Location: {result['location']}"))
                         try:
                             os.unlink(result["pptx_path"])  # type: ignore
+                            os.unlink(result["formatted_pptx_path"])  # type: ignore
                             os.unlink(result["pdf_path"])  # type: ignore
                         except: pass
                     else:
