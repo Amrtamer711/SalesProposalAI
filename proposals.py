@@ -331,6 +331,7 @@ async def process_proposals(
 
     individual_files = []
     pdf_files = []
+    pptx_files = []  # For merging PowerPoints
     locations = []
 
     loop = asyncio.get_event_loop()
@@ -436,7 +437,12 @@ async def process_proposals(
                     remove_last = True
                 else:
                     remove_first = True
-            pdf_file = await remove_slides_and_convert_to_pdf(pptx_file, remove_first, remove_last)
+            # Prepare PPTX with slides removed
+            prepared_pptx = await loop.run_in_executor(None, prepare_pptx_with_slides_removed, pptx_file, remove_first, remove_last)
+            pptx_files.append(prepared_pptx)
+            
+            # Convert to PDF
+            pdf_file = await loop.run_in_executor(None, convert_pptx_to_pdf, prepared_pptx)
             pdf_files.append(pdf_file)
     
     # For multiple proposals, create intro and outro slides
@@ -473,16 +479,15 @@ async def process_proposals(
             
             outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
             
-            # Insert intro at beginning and outro at end
+            # Insert intro at beginning and outro at end for both PDF and PPTX
             pdf_files.insert(0, intro_pdf)
             pdf_files.append(outro_pdf)
             
-            # Clean up temp files
-            try:
-                os.unlink(intro_pptx.name)
-                os.unlink(outro_pptx.name)
-            except:
-                pass
+            # Also insert the PPTX versions
+            pptx_files.insert(0, intro_pptx.name)
+            pptx_files.append(outro_pptx.name)
+            
+            # Don't clean up PPTX files yet - we need them for merging
 
     if is_single:
         totals = individual_files[0].get("totals", [])
@@ -506,10 +511,19 @@ async def process_proposals(
             "pdf_filename": individual_files[0]["pdf_filename"],
         }
 
+    # Merge PDFs
     merged_pdf = await loop.run_in_executor(None, merge_pdfs, pdf_files)
     for pdf_file in pdf_files:
         try:
             os.unlink(pdf_file)
+        except:
+            pass
+    
+    # Merge PowerPoints
+    merged_pptx = await loop.run_in_executor(None, merge_pptx_files, pptx_files)
+    for pptx_file in pptx_files:
+        try:
+            os.unlink(pptx_file)
         except:
             pass
 
@@ -528,6 +542,8 @@ async def process_proposals(
         "is_single": False,
         "individual_files": individual_files,
         "merged_pdf_path": merged_pdf,
+        "merged_pptx_path": merged_pptx,
         "locations": ", ".join(locations),
         "merged_pdf_filename": f"Combined_Proposal_{len(locations)}_Locations.pdf",
+        "merged_pptx_filename": f"Combined_Proposal_{len(locations)}_Locations.pptx",
     } 
