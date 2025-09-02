@@ -170,22 +170,25 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                     return
         
         if pptx_file:
-            # Build metadata.txt content
+            # Build metadata.txt content matching exact format of existing files
             metadata_lines = []
+            metadata_lines.append(f"Location Name: {pending_data['display_name']}")
             metadata_lines.append(f"Display Name: {pending_data['display_name']}")
             metadata_lines.append(f"Display Type: {pending_data['display_type']}")
-            metadata_lines.append(f"Height: {pending_data['height']}")
-            metadata_lines.append(f"Width: {pending_data['width']}")
             metadata_lines.append(f"Number of Faces: {pending_data['number_of_faces']}")
-            metadata_lines.append(f"Series: {pending_data['series']}")
             
-            # Only add digital-specific fields for digital locations
+            # For digital locations, add digital-specific fields in the correct order
             if pending_data['display_type'] == 'Digital':
-                metadata_lines.append(f"SOV: {pending_data['sov']}")
                 metadata_lines.append(f"Spot Duration: {pending_data['spot_duration']}")
                 metadata_lines.append(f"Loop Duration: {pending_data['loop_duration']}")
+                metadata_lines.append(f"SOV: {pending_data['sov']}")
                 if pending_data['upload_fee'] is not None:
                     metadata_lines.append(f"Upload Fee: {pending_data['upload_fee']}")
+            
+            # Series, Height, Width come after digital fields
+            metadata_lines.append(f"Series: {pending_data['series']}")
+            metadata_lines.append(f"Height: {pending_data['height']}")
+            metadata_lines.append(f"Width: {pending_data['width']}")
             
             metadata_text = "\n".join(metadata_lines)
             
