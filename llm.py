@@ -453,13 +453,11 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                         except: pass
                     else:
                         logger.info(f"[RESULT] Multiple separate proposals - Count: {len(result.get('individual_files', []))}")
-                        # Send merged PowerPoint
-                        await config.slack_client.files_upload_v2(channel=channel, file=result["merged_pptx_path"], filename=result["merged_pptx_filename"], initial_comment=config.markdown_to_slack(f"📊 **Combined PowerPoint**\n📍 All Locations: {result['locations']}"))
-                        # Send merged PDF
+                        for f in result["individual_files"]:
+                            await config.slack_client.files_upload_v2(channel=channel, file=f["path"], filename=f["filename"], initial_comment=config.markdown_to_slack(f"📊 **PowerPoint Proposal**\n📍 Location: {f['location']}"))
                         await config.slack_client.files_upload_v2(channel=channel, file=result["merged_pdf_path"], filename=result["merged_pdf_filename"], initial_comment=config.markdown_to_slack(f"📄 **Combined PDF**\n📍 All Locations: {result['locations']}"))
                         try:
                             for f in result["individual_files"]: os.unlink(f["path"])  # type: ignore
-                            os.unlink(result["merged_pptx_path"])  # type: ignore
                             os.unlink(result["merged_pdf_path"])  # type: ignore
                         except: pass
                 else:
