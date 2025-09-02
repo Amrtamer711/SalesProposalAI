@@ -28,16 +28,18 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
     logger = config.logger
     
     # First, look for digital locations
+    mapping = config.get_location_mapping()
     for proposal in proposals_data:
-        location_key = proposal.get("location", "").lower().strip()
+        location = proposal.get("location", "").lower().strip()
         
-        # Match location key
-        mapping = config.get_location_mapping()
-        matched_key = None
-        for key in mapping.keys():
-            if key in location_key or location_key in key:
-                matched_key = key
-                break
+        # Get the actual key from display name or direct match
+        matched_key = config.get_location_key_from_display_name(location)
+        if not matched_key:
+            # Try old matching logic
+            for key in mapping.keys():
+                if key in location or location in key:
+                    matched_key = key
+                    break
         
         if matched_key:
             location_meta = config.LOCATION_METADATA.get(matched_key, {})
@@ -49,11 +51,19 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
     # If no digital location found, use the first location from proposals
     if proposals_data:
         first_location = proposals_data[0].get("location", "").lower().strip()
-        mapping = config.get_location_mapping()
-        for key in mapping.keys():
-            if key in first_location or first_location in key:
-                logger.info(f"[INTRO_OUTRO] No digital location found, using first location: {key}")
-                return str(config.TEMPLATES_DIR / mapping[key])
+        
+        # Get the actual key from display name or direct match
+        matched_key = config.get_location_key_from_display_name(first_location)
+        if not matched_key:
+            # Try old matching logic
+            for key in mapping.keys():
+                if key in first_location or first_location in key:
+                    matched_key = key
+                    break
+        
+        if matched_key:
+            logger.info(f"[INTRO_OUTRO] No digital location found, using first location: {matched_key}")
+            return str(config.TEMPLATES_DIR / mapping[matched_key])
     
     logger.info(f"[INTRO_OUTRO] No suitable location found for intro/outro")
     return None
@@ -131,15 +141,21 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
         logger.info(f"[COMBINED]   Durations: {durations}")
         logger.info(f"[COMBINED]   Spots: {spots}")
 
-        mapping = config.get_location_mapping()
-        logger.info(f"[COMBINED] Available mappings: {list(mapping.keys())}")
+        # First try to get key from display name
+        matched_key = config.get_location_key_from_display_name(location)
         
-        matched_key = None
-        for key in mapping.keys():
-            if key in location or location in key:
-                matched_key = key
-                logger.info(f"[COMBINED] Matched '{location}' to '{key}'")
-                break
+        # If that didn't work, try the old matching logic
+        if not matched_key:
+            mapping = config.get_location_mapping()
+            logger.info(f"[COMBINED] Available mappings: {list(mapping.keys())}")
+            
+            for key in mapping.keys():
+                if key in location or location in key:
+                    matched_key = key
+                    logger.info(f"[COMBINED] Matched '{location}' to '{key}'")
+                    break
+        else:
+            logger.info(f"[COMBINED] Matched display name '{location}' to key '{matched_key}'")
                 
         if not matched_key:
             logger.error(f"[COMBINED] No match found for location '{location}'")
@@ -336,15 +352,21 @@ async def process_proposals(
         logger.info(f"[PROCESS]   Net rates: {net_rates}")
         logger.info(f"[PROCESS]   Spots: {spots}")
 
-        mapping = config.get_location_mapping()
-        logger.info(f"[PROCESS] Available location mappings: {list(mapping.keys())}")
+        # First try to get key from display name
+        matched_key = config.get_location_key_from_display_name(location)
         
-        matched_key = None
-        for key in mapping.keys():
-            if key in location or location in key:
-                matched_key = key
-                logger.info(f"[PROCESS] Matched '{location}' to '{key}'")
-                break
+        # If that didn't work, try the old matching logic
+        if not matched_key:
+            mapping = config.get_location_mapping()
+            logger.info(f"[PROCESS] Available location mappings: {list(mapping.keys())}")
+            
+            for key in mapping.keys():
+                if key in location or location in key:
+                    matched_key = key
+                    logger.info(f"[PROCESS] Matched '{location}' to '{key}'")
+                    break
+        else:
+            logger.info(f"[PROCESS] Matched display name '{location}' to key '{matched_key}'")
         
         if not matched_key:
             logger.error(f"[PROCESS] No match found for location '{location}'")

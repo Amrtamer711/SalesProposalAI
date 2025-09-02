@@ -237,6 +237,34 @@ def available_location_names() -> List[str]:
     return _DISPLAY_CACHE or []
 
 
+def get_location_key_from_display_name(display_name: str) -> Optional[str]:
+    """Convert a display name back to its location key."""
+    # Ensure metadata is loaded
+    if not LOCATION_METADATA:
+        refresh_templates()
+    
+    # Normalize the input
+    display_name_lower = display_name.lower().strip()
+    
+    # First try exact match
+    for key, meta in LOCATION_METADATA.items():
+        if meta.get('display_name', '').lower() == display_name_lower:
+            return key
+    
+    # Then try partial matches
+    for key, meta in LOCATION_METADATA.items():
+        meta_display = meta.get('display_name', '').lower()
+        if display_name_lower in meta_display or meta_display in display_name_lower:
+            return key
+    
+    # Also check if the display name is actually a key
+    for key in LOCATION_METADATA.keys():
+        if key == display_name_lower:
+            return key
+    
+    return None
+
+
 def markdown_to_slack(text: str) -> str:
     """Convert markdown formatting to Slack's mrkdwn format.
     
