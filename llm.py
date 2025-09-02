@@ -4,8 +4,10 @@ from typing import Dict, Any
 import os
 from pathlib import Path
 import aiohttp
+from datetime import datetime
 
 import config
+import db
 from proposals import process_proposals
 from slack_formatting import SlackResponses
 
@@ -221,6 +223,8 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         f"- You can ADD new locations by collecting a PPTX and metadata.txt\n"
         f"- You can REFRESH templates to reload available locations\n"
         f"- You can LIST available locations\n"
+        f"- You can EXPORT the backend database to Excel when user asks for 'excel backend' or similar\n"
+        f"- You can GET STATISTICS about proposals generated\n"
         f"- You can EDIT tasks (for task management workflows)\n\n"
         
         f"IMPORTANT:\n"
@@ -315,7 +319,9 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         {"type": "function", "name": "refresh_templates", "parameters": {"type": "object", "properties": {}}},
         {"type": "function", "name": "edit_task_flow", "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "task_data": {"type": "object"}}, "required": ["task_number", "task_data"]}},
         {"type": "function", "name": "add_location", "description": "Conversationally add new location: gather location_key, files (pptx, metadata), dedupe, confirm, then persist and refresh", "parameters": {"type": "object", "properties": {"location_key": {"type": "string", "description": "Folder/key name to use (lowercase, no spaces)"}, "confirm": {"type": "boolean", "description": "True only when user explicitly confirms"}}, "required": ["location_key"]}},
-        {"type": "function", "name": "list_locations", "description": "List the currently available locations to the user", "parameters": {"type": "object", "properties": {}}}
+        {"type": "function", "name": "list_locations", "description": "List the currently available locations to the user", "parameters": {"type": "object", "properties": {}}},
+        {"type": "function", "name": "export_proposals_to_excel", "description": "Export all proposals from the backend database to Excel and send to user", "parameters": {"type": "object", "properties": {}}},
+        {"type": "function", "name": "get_proposals_stats", "description": "Get summary statistics of proposals from the database", "parameters": {"type": "object", "properties": {}}}
     ]
 
     try:
@@ -460,6 +466,75 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 else:
                     listing = "\n".join(f"• {n}" for n in names)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"📍 **Current locations:**\n{listing}"))
+            
+            elif msg.name == "export_proposals_to_excel":
+                logger.info("[EXCEL_EXPORT] User requested Excel export")
+                try:
+                    excel_path = db.export_to_excel()
+                    logger.info(f"[EXCEL_EXPORT] Created Excel file at {excel_path}")
+                    
+                    # Get file size for display
+                    file_size = os.path.getsize(excel_path)
+                    size_mb = file_size / (1024 * 1024)
+                    
+                    await config.slack_client.files_upload_v2(
+                        channel=channel,
+                        file=excel_path,
+                        filename=f"proposals_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        initial_comment=config.markdown_to_slack(
+                            f"📊 **Proposals Database Export**\n"
+                            f"📅 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"📁 Size: {size_mb:.2f} MB"
+                        )
+                    )
+                    
+                    # Clean up temp file
+                    try:
+                        os.unlink(excel_path)
+                    except:
+                        pass
+                        
+                except Exception as e:
+                    logger.error(f"[EXCEL_EXPORT] Error: {e}", exc_info=True)
+                    await config.slack_client.chat_postMessage(
+                        channel=channel,
+                        text=config.markdown_to_slack("❌ **Error:** Failed to export database to Excel. Please try again.")
+                    )
+            
+            elif msg.name == "get_proposals_stats":
+                logger.info("[STATS] User requested proposals statistics")
+                try:
+                    stats = db.get_proposals_summary()
+                    
+                    # Format the statistics message
+                    message = "📊 **Proposals Database Summary**\n\n"
+                    message += f"**Total Proposals:** {stats['total_proposals']}\n\n"
+                    
+                    if stats['by_package_type']:
+                        message += "**By Package Type:**\n"
+                        for pkg_type, count in stats['by_package_type'].items():
+                            message += f"• {pkg_type.title()}: {count}\n"
+                        message += "\n"
+                    
+                    if stats['recent_proposals']:
+                        message += "**Recent Proposals:**\n"
+                        for proposal in stats['recent_proposals']:
+                            date_str = datetime.fromisoformat(proposal['date']).strftime('%Y-%m-%d %H:%M')
+                            message += f"• {proposal['client']} - {proposal['locations']} ({date_str})\n"
+                    else:
+                        message += "_No proposals generated yet._"
+                    
+                    await config.slack_client.chat_postMessage(
+                        channel=channel,
+                        text=config.markdown_to_slack(message)
+                    )
+                    
+                except Exception as e:
+                    logger.error(f"[STATS] Error: {e}", exc_info=True)
+                    await config.slack_client.chat_postMessage(
+                        channel=channel,
+                        text=config.markdown_to_slack("❌ **Error:** Failed to retrieve statistics. Please try again.")
+                    )
 
         else:
             reply = msg.content[-1].text if hasattr(msg, 'content') and msg.content else "How can I help you today?"
