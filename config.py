@@ -47,9 +47,27 @@ _HOS_CONFIG: Dict[str, Dict[str, Dict[str, object]]] = {}
 def load_hos_config() -> None:
     global _HOS_CONFIG
     try:
-        if HOS_CONFIG_FILE.exists():
-            _HOS_CONFIG = json.loads(HOS_CONFIG_FILE.read_text(encoding="utf-8"))
-        else:
+        logger.info(f"[HOS_CONFIG] Looking for config at: {HOS_CONFIG_FILE}")
+        logger.info(f"[HOS_CONFIG] File exists: {HOS_CONFIG_FILE.exists()}")
+        
+        # Try multiple locations
+        possible_paths = [
+            HOS_CONFIG_FILE,  # Original path
+            Path("/data/hos_config.json"),  # Absolute path in production
+            Path("./data/hos_config.json"),  # Relative path
+        ]
+        
+        config_loaded = False
+        for path in possible_paths:
+            if path.exists():
+                logger.info(f"[HOS_CONFIG] Found config at: {path}")
+                _HOS_CONFIG = json.loads(path.read_text(encoding="utf-8"))
+                logger.info(f"[HOS_CONFIG] Loaded config: {list(_HOS_CONFIG.keys())}")
+                config_loaded = True
+                break
+        
+        if not config_loaded:
+            logger.warning(f"[HOS_CONFIG] Config file not found in any location")
             _HOS_CONFIG = {}
     except Exception as e:
         logger.warning(f"Failed to load hos_config.json: {e}")
