@@ -23,6 +23,8 @@ def _template_path_for_key(key: str) -> Path:
 
 def _extract_slide(source_pptx: str, slide_index: int, output_pptx: str) -> None:
     """Extract a single slide from a presentation and save as new presentation."""
+    import io
+    
     source_pres = Presentation(source_pptx)
     dest_pres = Presentation()
     
@@ -36,32 +38,45 @@ def _extract_slide(source_pptx: str, slide_index: int, output_pptx: str) -> None
     if 0 <= slide_index < len(source_pres.slides):
         source_slide = source_pres.slides[slide_index]
         
-        # Add a slide with the same layout
-        slide_layout_idx = 0
-        for idx, layout in enumerate(source_pres.slide_layouts):
-            if layout == source_slide.slide_layout:
-                slide_layout_idx = idx
-                break
-        
-        # Use blank layout as fallback
-        if slide_layout_idx < len(dest_pres.slide_layouts):
-            slide_layout = dest_pres.slide_layouts[slide_layout_idx]
-        else:
-            slide_layout = dest_pres.slide_layouts[6] if len(dest_pres.slide_layouts) > 6 else dest_pres.slide_layouts[0]
-        
-        # Import the slide
+        # Add a blank slide
+        slide_layout = dest_pres.slide_layouts[6] if len(dest_pres.slide_layouts) > 6 else dest_pres.slide_layouts[0]
         dest_slide = dest_pres.slides.add_slide(slide_layout)
         
-        # Copy shapes
+        # Copy all shapes
         for shape in source_slide.shapes:
-            if shape.shape_type == 13:  # Picture
-                if hasattr(shape, 'image'):
-                    image_stream = shape.image.blob
+            try:
+                if shape.shape_type == 13:  # Picture
+                    if hasattr(shape, 'image'):
+                        image_stream = io.BytesIO(shape.image.blob)
+                        left = shape.left
+                        top = shape.top
+                        width = shape.width
+                        height = shape.height
+                        dest_slide.shapes.add_picture(image_stream, left, top, width, height)
+                elif hasattr(shape, 'text'):  # Text shape
+                    # Add text box
                     left = shape.left
                     top = shape.top
                     width = shape.width
                     height = shape.height
-                    dest_slide.shapes.add_picture(image_stream, left, top, width, height)
+                    textbox = dest_slide.shapes.add_textbox(left, top, width, height)
+                    text_frame = textbox.text_frame
+                    
+                    # Copy text content
+                    if shape.text:
+                        text_frame.text = shape.text
+                        
+                    # Try to copy text formatting
+                    if hasattr(shape, 'text_frame') and shape.text_frame:
+                        text_frame.word_wrap = shape.text_frame.word_wrap
+                        if hasattr(shape.text_frame, 'margin_left'):
+                            text_frame.margin_left = shape.text_frame.margin_left
+                            text_frame.margin_right = shape.text_frame.margin_right
+                            text_frame.margin_top = shape.text_frame.margin_top
+                            text_frame.margin_bottom = shape.text_frame.margin_bottom
+            except Exception as e:
+                config.logger.warning(f"[EXTRACT_SLIDE] Could not copy shape: {e}")
+                continue
         
         # Copy slide properties
         dest_pres.slide_width = source_pres.slide_width
@@ -70,11 +85,11 @@ def _extract_slide(source_pptx: str, slide_index: int, output_pptx: str) -> None
     dest_pres.save(output_pptx)
 
 
-def _get_landmark_series_template(proposals_data: List[Dict[str, Any]]) -> Optional[str]:
-    """Find the first Landmark Series location in the proposals, or first location if none found."""
+def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Optional[str]:
+    """Find the first digital location in the proposals for intro/outro slides, or any location if no digital found."""
     logger = config.logger
     
-    # First, look for Landmark Series locations
+    # First, look for digital locations
     for proposal in proposals_data:
         location_key = proposal.get("location", "").lower().strip()
         
@@ -88,19 +103,21 @@ def _get_landmark_series_template(proposals_data: List[Dict[str, Any]]) -> Optio
         
         if matched_key:
             location_meta = config.LOCATION_METADATA.get(matched_key, {})
-            if location_meta.get('series', '').lower() == 'the landmark series':
-                logger.info(f"[INTRO_OUTRO] Using Landmark Series location: {matched_key}")
+            display_type = location_meta.get('display_type', 'Digital')
+            if display_type == 'Digital':
+                logger.info(f"[INTRO_OUTRO] Using digital location for intro/outro: {matched_key}")
                 return str(config.TEMPLATES_DIR / mapping[matched_key])
     
-    # If no Landmark Series found, use the first location
+    # If no digital location found, use the first location from proposals
     if proposals_data:
         first_location = proposals_data[0].get("location", "").lower().strip()
         mapping = config.get_location_mapping()
         for key in mapping.keys():
             if key in first_location or first_location in key:
-                logger.info(f"[INTRO_OUTRO] No Landmark Series found, using first location: {key}")
+                logger.info(f"[INTRO_OUTRO] No digital location found, using first location: {key}")
                 return str(config.TEMPLATES_DIR / mapping[key])
     
+    logger.info(f"[INTRO_OUTRO] No suitable location found for intro/outro")
     return None
 
 
@@ -242,8 +259,8 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
             except:
                 pass
     
-    # For combined proposals, create intro and outro slides
-    intro_outro_template = _get_landmark_series_template(validated_proposals)
+    # For combined proposals, create intro and outro slides from digital locations
+    intro_outro_template = _get_digital_location_template(validated_proposals)
     if intro_outro_template:
         logger.info(f"[COMBINED] Creating intro/outro from: {intro_outro_template}")
         
@@ -417,7 +434,7 @@ async def process_proposals(
     
     # For multiple proposals, create intro and outro slides
     if len(pdf_files) > 1:
-        intro_outro_template = _get_landmark_series_template(proposals_data)
+        intro_outro_template = _get_digital_location_template(proposals_data)
         if intro_outro_template:
             logger.info(f"[PROCESS] Creating intro/outro from: {intro_outro_template}")
             
