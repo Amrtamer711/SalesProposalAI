@@ -164,6 +164,9 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
 
     loop = asyncio.get_event_loop()
     pdf_files: List[str] = []
+    
+    # Check if we'll have intro/outro slides
+    intro_outro_template = _get_digital_location_template(validated_proposals)
 
     for idx, proposal in enumerate(validated_proposals):
         src = config.TEMPLATES_DIR / proposal["filename"]
@@ -178,15 +181,21 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
             pptx_file = str(src)
             total_combined = None
 
-        remove_first = False
-        remove_last = False
-        if idx == 0:
-            remove_last = True
-        elif idx < len(validated_proposals) - 1:
+        # When we have intro/outro slides, remove both first and last from all PPTs
+        if intro_outro_template:
             remove_first = True
             remove_last = True
         else:
-            remove_first = True
+            # Legacy behavior when no intro/outro template
+            remove_first = False
+            remove_last = False
+            if idx == 0:
+                remove_last = True
+            elif idx < len(validated_proposals) - 1:
+                remove_first = True
+                remove_last = True
+            else:
+                remove_first = True
 
         pdf_file = await remove_slides_and_convert_to_pdf(pptx_file, remove_first, remove_last)
         pdf_files.append(pdf_file)
@@ -198,7 +207,6 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
                 pass
     
     # For combined proposals, create intro and outro slides from digital locations
-    intro_outro_template = _get_digital_location_template(validated_proposals)
     if intro_outro_template:
         logger.info(f"[COMBINED] Creating intro/outro from: {intro_outro_template}")
         
@@ -308,6 +316,11 @@ async def process_proposals(
     locations = []
 
     loop = asyncio.get_event_loop()
+    
+    # Check if we'll have intro/outro slides for multiple proposals
+    intro_outro_template = None
+    if len(proposals_data) > 1:
+        intro_outro_template = _get_digital_location_template(proposals_data)
 
     for idx, proposal in enumerate(proposals_data):
         location = proposal.get("location", "").lower().strip()
@@ -375,22 +388,26 @@ async def process_proposals(
             individual_files[0]["pdf_path"] = pdf_file
             individual_files[0]["pdf_filename"] = f"{matched_key.title()}_Proposal.pdf"
         else:
-            remove_first = False
-            remove_last = False
-            if idx == 0:
-                remove_last = True
-            elif idx < len(proposals_data) - 1:
+            # When we have intro/outro slides, remove both first and last from all PPTs
+            if intro_outro_template:
                 remove_first = True
                 remove_last = True
             else:
-                remove_first = True
+                # Legacy behavior when no intro/outro template
+                remove_first = False
+                remove_last = False
+                if idx == 0:
+                    remove_last = True
+                elif idx < len(proposals_data) - 1:
+                    remove_first = True
+                    remove_last = True
+                else:
+                    remove_first = True
             pdf_file = await remove_slides_and_convert_to_pdf(pptx_file, remove_first, remove_last)
             pdf_files.append(pdf_file)
     
     # For multiple proposals, create intro and outro slides
-    if len(pdf_files) > 1:
-        intro_outro_template = _get_digital_location_template(proposals_data)
-        if intro_outro_template:
+    if len(pdf_files) > 1 and intro_outro_template:
             logger.info(f"[PROCESS] Creating intro/outro from: {intro_outro_template}")
             
             # Create intro by keeping only the first slide
