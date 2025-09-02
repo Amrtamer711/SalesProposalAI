@@ -12,35 +12,72 @@ import config
 
 
 def add_location_text_with_colored_sov(paragraph, location_text: str, scale: float) -> None:
+    """Add location text with red coloring for the middle section (spots - duration - SOV).
+    Format: Series: Location - Size (H x W) - Faces - [RED: spots - duration - SOV] - loop
+    """
     import re
 
-    pattern = r"(\d+\s*Spot[s]?\s*[-–]\s*\d+\s*Second[s]?\s*[-–]\s*[\d.]+%\s*SOV)"
-    match = re.search(pattern, location_text, re.IGNORECASE)
+    # For digital displays: Find pattern "faces - X spots - Y Seconds - Z% SOV - loop"
+    # We want to color red from "X spots" to "Z% SOV" (inclusive)
+    digital_pattern = r"(\d+\s*faces\s*-\s*)(\d+\s*spots?\s*-\s*\d+\s*Seconds\s*-\s*[\d.]+%\s*SOV)(\s*-\s*\d+\s*seconds\s*loop)"
+    digital_match = re.search(digital_pattern, location_text, re.IGNORECASE)
+    
+    # For static displays: Find pattern "faces - X spots"
+    static_pattern = r"(\d+\s*faces\s*-\s*)(\d+\s*spots?)"
+    static_match = re.search(static_pattern, location_text, re.IGNORECASE)
 
-    if match:
-        start_pos = match.start()
-        end_pos = match.end()
-        before_text = location_text[:start_pos].strip()
-        sov_text = match.group(1)
-        after_text = location_text[end_pos:].strip()
+    if digital_match:
+        # Split into parts for digital display
+        before_red = location_text[:digital_match.start(2)]
+        red_text = digital_match.group(2)
+        after_red = location_text[digital_match.end(2):]
 
-        if before_text:
+        # Before red section
+        if before_red:
             run1 = paragraph.add_run()
-            run1.text = before_text + " "
+            run1.text = before_red
             run1.font.size = Pt(int(20 * scale))
             run1.font.color.rgb = RGBColor(0, 0, 0)
 
+        # Red section
         run2 = paragraph.add_run()
-        run2.text = sov_text
+        run2.text = red_text
         run2.font.size = Pt(int(20 * scale))
         run2.font.color.rgb = RGBColor(255, 0, 0)
 
-        if after_text:
+        # After red section
+        if after_red:
             run3 = paragraph.add_run()
-            run3.text = " " + after_text
+            run3.text = after_red
+            run3.font.size = Pt(int(20 * scale))
+            run3.font.color.rgb = RGBColor(0, 0, 0)
+    elif static_match:
+        # Split into parts for static display
+        before_red = location_text[:static_match.start(2)]
+        red_text = static_match.group(2)
+        after_red = location_text[static_match.end(2):]
+
+        # Before red section
+        if before_red:
+            run1 = paragraph.add_run()
+            run1.text = before_red
+            run1.font.size = Pt(int(20 * scale))
+            run1.font.color.rgb = RGBColor(0, 0, 0)
+
+        # Red section (just the spots for static)
+        run2 = paragraph.add_run()
+        run2.text = red_text
+        run2.font.size = Pt(int(20 * scale))
+        run2.font.color.rgb = RGBColor(255, 0, 0)
+
+        # After red section
+        if after_red:
+            run3 = paragraph.add_run()
+            run3.text = after_red
             run3.font.size = Pt(int(20 * scale))
             run3.font.color.rgb = RGBColor(0, 0, 0)
     else:
+        # Fallback: no coloring
         run = paragraph.add_run()
         run.text = location_text
         run.font.size = Pt(int(20 * scale))
@@ -105,35 +142,70 @@ def _spots_text(spots: int) -> str:
 
 
 def build_location_text(location_key: str, spots: int) -> str:
-    """Build a location description using metadata, adjusting SOV and spots.
-    If metadata description includes SOV and Spot, replace them; otherwise append the info.
+    """Build location description: Series: Location - Size (H x W) - Faces - Spots - Duration - SOV - Loop
+    Format: Series: Location - Size (Height x Width) - Number of faces - Number of spots - Spot Duration x spots - SOV x spots - Loop duration
     """
     logger = config.logger
     logger.info(f"[BUILD_LOC_TEXT] Building text for location '{location_key}' with {spots} spots")
     
+    # Get metadata from config (loaded from metadata.txt files)
     meta = config.LOCATION_METADATA.get(location_key.lower(), {})
     logger.info(f"[BUILD_LOC_TEXT] Metadata for '{location_key}': {meta}")
     
-    base_desc = str(meta.get("description") or config.LOCATION_DETAILS.get(location_key.lower(), location_key.title()))
-    base_sov = float(meta.get("base_sov_percent", 16.6))
-    effective_sov = base_sov * max(1, int(spots))
+    # Extract values from metadata
+    series = meta.get("series", "")
+    location_name = meta.get("display_name", location_key.title())
+    height = meta.get("height", "")
+    width = meta.get("width", "")
+    num_faces = meta.get("number_of_faces", 1)
+    display_type = meta.get("display_type", "Digital").lower()
+    spot_duration = meta.get("spot_duration", 16)
+    loop_duration = meta.get("loop_duration", 96)
+    base_sov = float(meta.get("sov", "16.6").replace("%", ""))
     
-    logger.info(f"[BUILD_LOC_TEXT] Base description: '{base_desc}'")
-    logger.info(f"[BUILD_LOC_TEXT] Base SOV: {base_sov}%, Effective SOV: {effective_sov}%")
-
-    import re
-    desc = base_desc
-    # Replace spots count
-    desc = re.sub(r"\b\d+\s*Spot[s]?\b", _spots_text(spots), desc, flags=re.IGNORECASE)
-    # Replace SOV percent
-    desc = re.sub(r"[\d.]+%\s*SOV", f"{effective_sov:.1f}% SOV", desc, flags=re.IGNORECASE)
-
-    # If no SOV found, append
-    if re.search(r"%\s*SOV", desc, flags=re.IGNORECASE) is None:
-        desc = desc.rstrip() + f" - {_spots_text(spots)} - {effective_sov:.1f}% SOV"
+    # Build description parts
+    parts = []
     
-    logger.info(f"[BUILD_LOC_TEXT] Final description: '{desc}'")
-    return desc
+    # Series: Location
+    if series:
+        parts.append(f"{series}: {location_name}")
+    else:
+        parts.append(location_name)
+    
+    # Size (Height x Width)
+    if height and width:
+        # Remove 'm' suffix if present and re-add it
+        h = str(height).replace('m', '').strip()
+        w = str(width).replace('m', '').strip()
+        parts.append(f"Size ({h}m x {w}m)")
+    
+    # Number of faces
+    parts.append(f"{num_faces} faces")
+    
+    # For digital displays, add spot-related info
+    if display_type == "digital":
+        # Number of spots
+        parts.append(f"{spots} {'spot' if spots == 1 else 'spots'}")
+        
+        # Spot Duration x Number of spots
+        total_spot_duration = int(spot_duration) * spots
+        parts.append(f"{total_spot_duration} Seconds")
+        
+        # SOV x Number of spots
+        effective_sov = base_sov * spots
+        parts.append(f"{effective_sov:.1f}% SOV")
+        
+        # Loop duration
+        parts.append(f"{loop_duration} seconds loop")
+    else:
+        # For static displays, just add number of spots
+        parts.append(f"{spots} {'spot' if spots == 1 else 'spots'}")
+    
+    # Join all parts with " - "
+    description = " - ".join(parts)
+    
+    logger.info(f"[BUILD_LOC_TEXT] Final description: '{description}'")
+    return description
 
 
 def create_financial_proposal_slide(slide, financial_data: dict, slide_width, slide_height) -> Tuple[List[str], List[str]]:

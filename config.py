@@ -84,15 +84,16 @@ def _parse_metadata_file(folder: Path) -> Dict[str, object]:
             if ":" not in line:
                 continue
             k, v = line.split(":", 1)
-            key = k.strip().lower()
+            key = k.strip().lower().replace(" ", "_")
             val = v.strip()
             meta[key] = val
     except Exception as e:
         logger.warning(f"Failed to parse metadata at {path}: {e}")
         return meta
 
+    # Parse specific fields
     upload_fee: Optional[int] = None
-    uf = str(meta.get("upload fee", "")).replace(",", "").strip()
+    uf = str(meta.get("upload_fee", "")).replace(",", "").strip()
     if uf.isdigit():
         upload_fee = int(uf)
 
@@ -102,14 +103,45 @@ def _parse_metadata_file(folder: Path) -> Dict[str, object]:
     except Exception:
         base_sov = 16.6
 
-    description = str(meta.get("description", "")).strip()
-    display_name = str(meta.get("display name", meta.get("location name", ""))).strip()
+    display_name = str(meta.get("display_name", meta.get("location_name", ""))).strip()
+    
+    # Parse new fields
+    series = str(meta.get("series", "")).strip()
+    height = str(meta.get("height", "")).strip()
+    width = str(meta.get("width", "")).strip()
+    number_of_faces = 1
+    if meta.get("number_of_faces"):
+        try:
+            number_of_faces = int(meta.get("number_of_faces"))
+        except:
+            number_of_faces = 1
+    
+    display_type = str(meta.get("display_type", "Digital")).strip()
+    spot_duration = 16
+    if meta.get("spot_duration"):
+        try:
+            spot_duration = int(meta.get("spot_duration"))
+        except:
+            spot_duration = 16
+    
+    loop_duration = 96
+    if meta.get("loop_duration"):
+        try:
+            loop_duration = int(meta.get("loop_duration"))
+        except:
+            loop_duration = 96
 
     return {
         "display_name": display_name,
-        "description": description,
         "upload_fee": upload_fee,
-        "base_sov_percent": base_sov,
+        "sov": f"{base_sov}%",
+        "series": series,
+        "height": height,
+        "width": width,
+        "number_of_faces": number_of_faces,
+        "display_type": display_type,
+        "spot_duration": spot_duration,
+        "loop_duration": loop_duration,
         "folder": str(folder.name),
     }
 
@@ -147,14 +179,16 @@ def _discover_templates() -> Tuple[Dict[str, str], List[str]]:
 
         display_names.append(str(display_name))
         LOCATION_DETAILS[key] = str(description)
-        UPLOAD_FEES_MAPPING[key] = int(upload_fee)
-        LOCATION_METADATA[key] = {
-            "display_name": str(display_name),
-            "description": str(description),
-            "upload_fee": int(upload_fee),
-            "base_sov_percent": float(base_sov),
-            "pptx_rel_path": str(rel_path),
-        }
+        
+        # Use upload fee from metadata or default
+        if meta.get("upload_fee") is not None:
+            UPLOAD_FEES_MAPPING[key] = int(meta.get("upload_fee"))
+        else:
+            UPLOAD_FEES_MAPPING[key] = 3000
+        
+        # Store all metadata fields
+        LOCATION_METADATA[key] = meta
+        LOCATION_METADATA[key]["pptx_rel_path"] = str(rel_path)
 
     logger.info(f"[DISCOVER] Discovery complete. Found {len(key_to_relpath)} templates")
     logger.info(f"[DISCOVER] Location keys: {list(key_to_relpath.keys())}")
