@@ -177,12 +177,15 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
             metadata_lines.append(f"Height: {pending_data['height']}")
             metadata_lines.append(f"Width: {pending_data['width']}")
             metadata_lines.append(f"Number of Faces: {pending_data['number_of_faces']}")
-            metadata_lines.append(f"SOV: {pending_data['sov']}")
             metadata_lines.append(f"Series: {pending_data['series']}")
-            metadata_lines.append(f"Spot Duration: {pending_data['spot_duration']}")
-            metadata_lines.append(f"Loop Duration: {pending_data['loop_duration']}")
-            if pending_data['upload_fee'] is not None:
-                metadata_lines.append(f"Upload Fee: {pending_data['upload_fee']}")
+            
+            # Only add digital-specific fields for digital locations
+            if pending_data['display_type'] == 'Digital':
+                metadata_lines.append(f"SOV: {pending_data['sov']}")
+                metadata_lines.append(f"Spot Duration: {pending_data['spot_duration']}")
+                metadata_lines.append(f"Loop Duration: {pending_data['loop_duration']}")
+                if pending_data['upload_fee'] is not None:
+                    metadata_lines.append(f"Upload Fee: {pending_data['upload_fee']}")
             
             metadata_text = "\n".join(metadata_lines)
             
@@ -432,23 +435,23 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         {
             "type": "function", 
             "name": "add_location", 
-            "description": "Add a new location. Admin must provide ALL required metadata upfront, then upload the PPT file.", 
+            "description": "Add a new location. Admin must provide ALL required metadata upfront, then upload the PPT file. Digital locations require: sov, spot_duration, loop_duration, upload_fee. Static locations don't need these fields.", 
             "parameters": {
                 "type": "object", 
                 "properties": {
                     "location_key": {"type": "string", "description": "Folder/key name (lowercase, underscores for spaces, e.g., 'dubai_gateway')"},
                     "display_name": {"type": "string", "description": "Display name shown to users (e.g., 'The Dubai Gateway')"},
-                    "display_type": {"type": "string", "enum": ["Digital", "Static"], "description": "Display type"},
+                    "display_type": {"type": "string", "enum": ["Digital", "Static"], "description": "Display type - determines which fields are required"},
                     "height": {"type": "string", "description": "Height with unit (e.g., '6m', '14m')"},
                     "width": {"type": "string", "description": "Width with unit (e.g., '12m', '7m')"},
-                    "number_of_faces": {"type": "integer", "description": "Number of display faces (e.g., 1, 2, 4, 6)"},
-                    "sov": {"type": "string", "description": "Share of voice percentage (e.g., '16.6%', '12.5%')"},
+                    "number_of_faces": {"type": "integer", "description": "Number of display faces (e.g., 1, 2, 4, 6)", "default": 1},
                     "series": {"type": "string", "description": "Series name (e.g., 'The Landmark Series', 'Digital Icons')"},
-                    "spot_duration": {"type": "integer", "description": "Duration of each spot in seconds (e.g., 10, 12, 16)"},
-                    "loop_duration": {"type": "integer", "description": "Total loop duration in seconds (e.g., 96, 100)"},
-                    "upload_fee": {"type": "integer", "description": "Upload fee in AED for digital locations (e.g., 1000, 1500, 2000, 3000)"}
+                    "sov": {"type": "string", "description": "Share of voice percentage - REQUIRED for Digital only (e.g., '16.6%', '12.5%')"},
+                    "spot_duration": {"type": "integer", "description": "Duration of each spot in seconds - REQUIRED for Digital only (e.g., 10, 12, 16)"},
+                    "loop_duration": {"type": "integer", "description": "Total loop duration in seconds - REQUIRED for Digital only (e.g., 96, 100)"},
+                    "upload_fee": {"type": "integer", "description": "Upload fee in AED - REQUIRED for Digital only (e.g., 1000, 1500, 2000, 3000)"}
                 }, 
-                "required": ["location_key", "display_name", "display_type", "height", "width", "number_of_faces", "sov", "series", "spot_duration", "loop_duration"]
+                "required": ["location_key", "display_name", "display_type", "height", "width", "series"]
             }
         },
         {"type": "function", "name": "list_locations", "description": "List the currently available locations to the user", "parameters": {"type": "object", "properties": {}}},
@@ -589,18 +592,19 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                     missing.append("height")
                 if not width:
                     missing.append("width")
-                if not sov:
-                    missing.append("sov")
                 if not series:
                     missing.append("series")
-                if not spot_duration:
-                    missing.append("spot_duration")
-                if not loop_duration:
-                    missing.append("loop_duration")
                 
-                # For digital locations, upload_fee is required
-                if display_type == "Digital" and upload_fee is None:
-                    missing.append("upload_fee")
+                # For digital locations only, these fields are required
+                if display_type == "Digital":
+                    if not sov:
+                        missing.append("sov")
+                    if not spot_duration:
+                        missing.append("spot_duration")
+                    if not loop_duration:
+                        missing.append("loop_duration")
+                    if upload_fee is None:
+                        missing.append("upload_fee")
                 
                 if missing:
                     await config.slack_client.chat_postMessage(
@@ -626,22 +630,30 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 }
                 
                 # Ask for PPT file
-                await config.slack_client.chat_postMessage(
-                    channel=channel,
-                    text=config.markdown_to_slack(
-                        f"✅ **Location metadata validated for `{location_key}`**\n\n"
-                        f"📋 **Summary:**\n"
-                        f"• Display Name: {display_name}\n"
-                        f"• Display Type: {display_type}\n"
-                        f"• Dimensions: {height} x {width}\n"
-                        f"• Faces: {number_of_faces}\n"
+                summary_text = (
+                    f"✅ **Location metadata validated for `{location_key}`**\n\n"
+                    f"📋 **Summary:**\n"
+                    f"• Display Name: {display_name}\n"
+                    f"• Display Type: {display_type}\n"
+                    f"• Dimensions: {height} x {width}\n"
+                    f"• Faces: {number_of_faces}\n"
+                    f"• Series: {series}\n"
+                )
+                
+                # Add digital-specific fields only for digital locations
+                if display_type == "Digital":
+                    summary_text += (
                         f"• SOV: {sov}\n"
-                        f"• Series: {series}\n"
                         f"• Spot Duration: {spot_duration}s\n"
                         f"• Loop Duration: {loop_duration}s\n"
-                        f"• Upload Fee: AED {upload_fee if upload_fee else 'N/A'}\n\n"
-                        f"📎 **Please upload the PowerPoint template file now.**"
+                        f"• Upload Fee: AED {upload_fee}\n"
                     )
+                
+                summary_text += "\n📎 **Please upload the PowerPoint template file now.**"
+                
+                await config.slack_client.chat_postMessage(
+                    channel=channel,
+                    text=config.markdown_to_slack(summary_text)
                 )
                 return
 
