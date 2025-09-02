@@ -349,23 +349,23 @@ def create_financial_proposal_slide(slide, financial_data: dict, slide_width, sl
 
     bullet_box = slide.shapes.add_textbox(
         left=int(Inches(0.75) * scale_x),
-        top=int(Inches(9.0) * scale_y),
+        top=int(Inches(9.5) * scale_y),  # Moved down from 9.0 to 9.5
         width=int(Inches(18.5) * scale_x),
-        height=int(Inches(2.5) * scale_y),
+        height=int(Inches(2.0) * scale_y),  # Reduced height from 2.5 to 2.0
     )
 
     tf = bullet_box.text_frame
     tf.word_wrap = True
     tf.margin_left = Inches(0)
     tf.margin_right = Inches(0)
-    tf.margin_top = Inches(0.1)
+    tf.margin_top = Inches(0.05)  # Reduced from 0.1
     tf.margin_bottom = Inches(0)
 
     p = tf.paragraphs[0]
     p.text = bullet_text
-    p.font.size = Pt(int(14 * scale))
+    p.font.size = Pt(int(11 * scale))  # Reduced from 14pt to 11pt
     p.font.color.rgb = RGBColor(0, 0, 0)
-    p.line_spacing = 1.3
+    p.line_spacing = 1.2  # Reduced from 1.3 to 1.2
 
     return vat_amounts, total_amounts
 
@@ -571,22 +571,22 @@ def create_combined_financial_proposal_slide(slide, proposals_data: list, combin
 
     bullet_box = slide.shapes.add_textbox(
         left=int(Inches(0.75) * scale_x),
-        top=int(Inches(9.0) * scale_y),
+        top=int(Inches(9.5) * scale_y),  # Moved down from 9.0 to 9.5
         width=int(Inches(18.5) * scale_x),
-        height=int(Inches(2.5) * scale_y),
+        height=int(Inches(2.0) * scale_y),  # Reduced height from 2.5 to 2.0
     )
 
     tf = bullet_box.text_frame
     tf.word_wrap = True
     tf.margin_left = Inches(0)
     tf.margin_right = Inches(0)
-    tf.margin_top = Inches(0.1)
+    tf.margin_top = Inches(0.05)  # Reduced from 0.1
     tf.margin_bottom = Inches(0)
 
     p = tf.paragraphs[0]
     p.text = bullet_text
-    p.font.size = Pt(int(14 * scale))
+    p.font.size = Pt(int(11 * scale))  # Reduced from 14pt to 11pt
     p.font.color.rgb = RGBColor(0, 0, 0)
-    p.line_spacing = 1.3
+    p.line_spacing = 1.2  # Reduced from 1.3 to 1.2
 
     return f"AED {total:,.0f}" 
