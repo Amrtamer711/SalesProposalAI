@@ -4,7 +4,7 @@ from typing import Dict, Any
 import os
 from pathlib import Path
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import config
 import db
@@ -12,6 +12,9 @@ from proposals import process_proposals
 from slack_formatting import SlackResponses
 
 user_history: Dict[str, list] = {}
+
+# Global for temporary location uploads
+temp_location_uploads: Dict[str, Dict[str, Any]] = {}
 
 
 async def handle_edit_task_flow(channel: str, user_id: str, user_input: str, task_number: int, task_data: Dict[str, Any]) -> str:
@@ -220,7 +223,11 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         f"Please provide these details.'\n\n"
         
         f"ADDITIONAL FEATURES:\n"
-        f"- You can ADD new locations by collecting a PPTX and metadata.txt\n"
+        f"- You can ADD new locations interactively:\n"
+        f"  1. User says 'add location <key>' and uploads PPTX file\n"
+        f"  2. Bot collects all required metadata fields\n"
+        f"  3. User confirms and location is saved\n"
+        f"  4. PPTX is stored temporarily so user doesn't need to re-upload\n"
         f"- You can REFRESH templates to reload available locations\n"
         f"- You can LIST available locations\n"
         f"- You can EXPORT the backend database to Excel when user asks for 'excel backend' or similar\n"
@@ -236,6 +243,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         f"- When user mentions 'combined deal' or 'special package' with total price, use get_combined_proposal\n"
         f"- Format all rates as 'AED X,XXX,XXX'\n"
         f"- Parse 'mil' or 'million' as 000,000 (e.g., '2 mil' = 'AED 2,000,000')\n"
+        f"- Number of spots defaults to 1 if not specified\n"
         f"- ALWAYS collect client name - it's required for tracking"
     )
 
@@ -318,7 +326,38 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         },
         {"type": "function", "name": "refresh_templates", "parameters": {"type": "object", "properties": {}}},
         {"type": "function", "name": "edit_task_flow", "parameters": {"type": "object", "properties": {"task_number": {"type": "integer"}, "task_data": {"type": "object"}}, "required": ["task_number", "task_data"]}},
-        {"type": "function", "name": "add_location", "description": "Conversationally add new location: gather location_key, files (pptx, metadata), dedupe, confirm, then persist and refresh", "parameters": {"type": "object", "properties": {"location_key": {"type": "string", "description": "Folder/key name to use (lowercase, no spaces)"}, "confirm": {"type": "boolean", "description": "True only when user explicitly confirms"}}, "required": ["location_key"]}},
+        {
+            "type": "function", 
+            "name": "add_location", 
+            "description": "Add new location with metadata. Collect all required fields interactively.", 
+            "parameters": {
+                "type": "object", 
+                "properties": {
+                    "location_key": {"type": "string", "description": "Folder/key name to use (lowercase, no spaces)"},
+                    "metadata": {
+                        "type": "object",
+                        "description": "Location metadata fields",
+                        "properties": {
+                            "location_name": {"type": "string", "description": "Full location name (e.g., 'The Oryx')"},
+                            "display_name": {"type": "string", "description": "Display name for proposals"},
+                            "series": {"type": "string", "description": "Series name (e.g., 'The Landmark Series')"},
+                            "display_type": {"type": "string", "enum": ["Digital", "Static"], "description": "Display type"},
+                            "height": {"type": "string", "description": "Height with units (e.g., '6m')"},
+                            "width": {"type": "string", "description": "Width with units (e.g., '12m')"},
+                            "number_of_faces": {"type": "integer", "description": "Number of display faces", "default": 1},
+                            "spot_duration": {"type": "integer", "description": "Spot duration in seconds (for digital)"},
+                            "loop_duration": {"type": "integer", "description": "Loop duration in seconds (for digital)"},
+                            "sov": {"type": "string", "description": "Share of Voice percentage (e.g., '16.6%')"},
+                            "upload_fee": {"type": "integer", "description": "Upload fee in AED"}
+                        },
+                        "required": ["location_name", "display_name", "display_type", "height", "width"]
+                    },
+                    "stage": {"type": "string", "enum": ["init", "collecting", "confirm", "save"], "description": "Current stage of the process"},
+                    "confirm": {"type": "boolean", "description": "True only when user explicitly confirms"}
+                }, 
+                "required": ["location_key"]
+            }
+        },
         {"type": "function", "name": "list_locations", "description": "List the currently available locations to the user", "parameters": {"type": "object", "properties": {}}},
         {"type": "function", "name": "export_proposals_to_excel", "description": "Export all proposals from the backend database to Excel and send to user", "parameters": {"type": "object", "properties": {}}},
         {"type": "function", "name": "get_proposals_stats", "description": "Get summary statistics of proposals from the database", "parameters": {"type": "object", "properties": {}}}
@@ -417,47 +456,195 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 await handle_edit_task_flow(channel, user_id, user_input, task_number, task_data)
 
             elif msg.name == "add_location":
-                # Permission gate
-                if not config.can_manage_locations(user_id):
-                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** You are not authorized to manage locations."))
+                # Admin permission gate
+                if not config.is_admin(user_id):
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** You need admin privileges to add locations."))
                     return
 
                 args = json.loads(msg.arguments)
-                location_key = args.get("location_key", "").strip().lower().replace(" ", "-")
+                location_key = args.get("location_key", "").strip().lower().replace(" ", "_")
+                metadata = args.get("metadata", {})
+                stage = args.get("stage", "init")
                 confirm = bool(args.get("confirm", False))
+                
+                # Create unique session key for this user/location
+                session_key = f"{user_id}_{location_key}"
 
                 if not location_key:
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("Please provide a short key for the location (e.g., `oryx`)."))
                     return
 
+                # Check if location already exists
                 mapping = config.get_location_mapping()
-                if location_key in mapping:
-                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"⚠️ I already have a location `{location_key}`. Reply **'confirm overwrite'** to replace it or provide a different key."))
+                if location_key in mapping and stage == "init":
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"⚠️ Location `{location_key}` already exists. Please provide a different key or say 'overwrite {location_key}' to replace it."))
                     return
 
-                pptx_temp = None
-                metadata_text = None
-                if slack_event and "files" in slack_event:
+                # Handle file uploads
+                if slack_event and "files" in slack_event and stage in ["init", "collecting"]:
+                    # Initialize session data if needed
+                    if session_key not in temp_location_uploads:
+                        temp_location_uploads[session_key] = {
+                            "location_key": location_key,
+                            "pptx_path": None,
+                            "metadata": {},
+                            "timestamp": datetime.now()
+                        }
+                    
                     for f in slack_event["files"]:
                         if f.get("filetype") == "pptx" or f.get("mimetype", "").endswith("powerpoint"):
+                            # Download and save PPTX temporarily
                             pptx_temp = await _download_slack_file(f)
-                        elif f.get("filetype") in ("txt",) or f.get("mimetype", "").startswith("text/"):
-                            txt_path = await _download_slack_file(f)
-                            metadata_text = Path(txt_path).read_text(encoding="utf-8")
-                            try: os.unlink(txt_path)
-                            except: pass
+                            temp_location_uploads[session_key]["pptx_path"] = pptx_temp
+                            await config.slack_client.chat_postMessage(
+                                channel=channel, 
+                                text=config.markdown_to_slack("✅ PowerPoint file received and saved temporarily.")
+                            )
 
-                if not pptx_temp or not metadata_text:
-                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("📎 Please upload both:\n• The PPTX template file\n• A metadata.txt file\n\nThen say `add location <key>` to save them."))
-                    return
-
-                if not confirm:
-                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"✅ Ready to add location `{location_key}`.\n\nReply **'confirm'** to proceed or **'cancel'** to abort."))
-                    return
-
-                await _persist_location_upload(location_key, pptx_temp, metadata_text)
-                config.refresh_templates()
-                await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"✅ Successfully added location `{location_key}`. You can now use it in proposals."))
+                # Different stages of the add location flow
+                if stage == "init":
+                    # Check if we have a PPTX file
+                    if session_key not in temp_location_uploads or not temp_location_uploads[session_key].get("pptx_path"):
+                        await config.slack_client.chat_postMessage(
+                            channel=channel,
+                            text=config.markdown_to_slack(
+                                f"📎 **Adding location: {location_key}**\n\n"
+                                f"Please upload the PowerPoint template file for this location."
+                            )
+                        )
+                        return
+                    
+                    # Start collecting metadata
+                    await config.slack_client.chat_postMessage(
+                        channel=channel,
+                        text=config.markdown_to_slack(
+                            f"📋 **Location Metadata for {location_key}**\n\n"
+                            f"I need the following information:\n"
+                            f"• **Location Name**: Full name (e.g., 'The Oryx')\n"
+                            f"• **Display Name**: Name for proposals\n"
+                            f"• **Series**: Series name (e.g., 'The Landmark Series')\n"
+                            f"• **Display Type**: Digital or Static\n"
+                            f"• **Size**: Height x Width (e.g., '6m x 12m')\n"
+                            f"• **Number of Faces**: How many display faces (default: 1)\n"
+                            f"• **Upload Fee**: Fee in AED\n\n"
+                            f"For digital displays also provide:\n"
+                            f"• **Spot Duration**: Duration in seconds\n"
+                            f"• **Loop Duration**: Total loop in seconds\n"
+                            f"• **SOV**: Share of Voice percentage\n\n"
+                            f"Please provide this information in your next message."
+                        )
+                    )
+                    
+                elif stage == "collecting":
+                    # Update metadata from current call
+                    if session_key in temp_location_uploads:
+                        temp_location_uploads[session_key]["metadata"].update(metadata)
+                        current_meta = temp_location_uploads[session_key]["metadata"]
+                        
+                        # Check what's missing
+                        required = ["location_name", "display_name", "display_type", "height", "width"]
+                        missing = [f for f in required if f not in current_meta or not current_meta[f]]
+                        
+                        if current_meta.get("display_type", "").lower() == "digital":
+                            digital_required = ["spot_duration", "loop_duration", "sov"]
+                            missing.extend([f for f in digital_required if f not in current_meta or not current_meta[f]])
+                        
+                        if missing:
+                            missing_formatted = [f.replace("_", " ").title() for f in missing]
+                            await config.slack_client.chat_postMessage(
+                                channel=channel,
+                                text=config.markdown_to_slack(
+                                    f"⚠️ **Missing information:**\n\n" +
+                                    "\n".join([f"• {field}" for field in missing_formatted]) +
+                                    "\n\nPlease provide the missing fields."
+                                )
+                            )
+                        else:
+                            # All required fields collected, show summary
+                            await config.slack_client.chat_postMessage(
+                                channel=channel,
+                                text=config.markdown_to_slack(
+                                    f"📋 **Location Summary for {location_key}**\n\n" +
+                                    f"• **Location Name**: {current_meta['location_name']}\n" +
+                                    f"• **Display Name**: {current_meta['display_name']}\n" +
+                                    f"• **Series**: {current_meta.get('series', 'Not specified')}\n" +
+                                    f"• **Display Type**: {current_meta['display_type']}\n" +
+                                    f"• **Size**: {current_meta['height']} x {current_meta['width']}\n" +
+                                    f"• **Number of Faces**: {current_meta.get('number_of_faces', 1)}\n" +
+                                    f"• **Upload Fee**: AED {current_meta.get('upload_fee', 'Not specified')}\n" +
+                                    (f"• **Spot Duration**: {current_meta.get('spot_duration', 'N/A')} seconds\n" if current_meta.get('display_type', '').lower() == 'digital' else "") +
+                                    (f"• **Loop Duration**: {current_meta.get('loop_duration', 'N/A')} seconds\n" if current_meta.get('display_type', '').lower() == 'digital' else "") +
+                                    (f"• **SOV**: {current_meta.get('sov', 'N/A')}\n" if current_meta.get('display_type', '').lower() == 'digital' else "") +
+                                    f"\n**Reply 'confirm' to save this location or 'edit' to make changes.**"
+                                )
+                            )
+                    else:
+                        await config.slack_client.chat_postMessage(
+                            channel=channel,
+                            text=config.markdown_to_slack("❌ Session expired. Please start over with 'add location'.")
+                        )
+                        
+                elif stage == "confirm" and confirm:
+                    if session_key in temp_location_uploads:
+                        session_data = temp_location_uploads[session_key]
+                        pptx_path = session_data["pptx_path"]
+                        metadata_dict = session_data["metadata"]
+                        
+                        # Build metadata.txt content
+                        metadata_lines = []
+                        metadata_lines.append(f"Location Name: {metadata_dict.get('location_name', '')}")
+                        metadata_lines.append(f"Display Name: {metadata_dict.get('display_name', '')}")
+                        metadata_lines.append(f"Display Type: {metadata_dict.get('display_type', 'Digital')}")
+                        metadata_lines.append(f"Number of Faces: {metadata_dict.get('number_of_faces', 1)}")
+                        
+                        if metadata_dict.get('display_type', '').lower() == 'digital':
+                            metadata_lines.append(f"Spot Duration: {metadata_dict.get('spot_duration', 16)}")
+                            metadata_lines.append(f"Loop Duration: {metadata_dict.get('loop_duration', 96)}")
+                            metadata_lines.append(f"SOV: {metadata_dict.get('sov', '16.6%')}")
+                        
+                        metadata_lines.append(f"Upload Fee: {metadata_dict.get('upload_fee', 3000)}")
+                        if metadata_dict.get('series'):
+                            metadata_lines.append(f"Series: {metadata_dict.get('series')}")
+                        metadata_lines.append(f"Height: {metadata_dict.get('height', '')}")
+                        metadata_lines.append(f"Width: {metadata_dict.get('width', '')}")
+                        
+                        metadata_text = "\n".join(metadata_lines)
+                        
+                        # Save the location
+                        await _persist_location_upload(location_key, pptx_path, metadata_text)
+                        
+                        # Clean up temporary data
+                        del temp_location_uploads[session_key]
+                        
+                        # Refresh templates
+                        config.refresh_templates()
+                        
+                        await config.slack_client.chat_postMessage(
+                            channel=channel,
+                            text=config.markdown_to_slack(
+                                f"✅ **Successfully added location `{location_key}`**\n\n"
+                                f"The location is now available for use in proposals."
+                            )
+                        )
+                    else:
+                        await config.slack_client.chat_postMessage(
+                            channel=channel,
+                            text=config.markdown_to_slack("❌ Session expired. Please start over with 'add location'.")
+                        )
+                        
+                # Clean up old sessions (older than 30 minutes)
+                cutoff = datetime.now() - timedelta(minutes=30)
+                expired_sessions = [
+                    key for key, data in temp_location_uploads.items()
+                    if data.get("timestamp", datetime.now()) < cutoff
+                ]
+                for key in expired_sessions:
+                    if "pptx_path" in temp_location_uploads[key] and temp_location_uploads[key]["pptx_path"]:
+                        try:
+                            os.unlink(temp_location_uploads[key]["pptx_path"])
+                        except:
+                            pass
+                    del temp_location_uploads[key]
 
             elif msg.name == "list_locations":
                 names = config.available_location_names()
@@ -468,6 +655,11 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"📍 **Current locations:**\n{listing}"))
             
             elif msg.name == "export_proposals_to_excel":
+                # Admin permission gate
+                if not config.is_admin(user_id):
+                    await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** You need admin privileges to export the database."))
+                    return
+                    
                 logger.info("[EXCEL_EXPORT] User requested Excel export")
                 try:
                     excel_path = db.export_to_excel()

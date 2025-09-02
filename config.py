@@ -69,6 +69,18 @@ def can_manage_locations(slack_user_id: str) -> bool:
     return slack_user_id in allowed_ids
 
 
+def is_admin(slack_user_id: str) -> bool:
+    """Check if user has admin privileges (can add locations and export database)."""
+    if not _HOS_CONFIG:
+        load_hos_config()
+    # Admin users are those in the 'admin' group
+    admin_members = _HOS_CONFIG.get("admin", {})
+    for _, info in admin_members.items():
+        if info.get("active") and info.get("slack_user_id") == slack_user_id:
+            return True
+    return False
+
+
 def _normalize_key(name: str) -> str:
     return os.path.splitext(name)[0].strip().lower()
 
