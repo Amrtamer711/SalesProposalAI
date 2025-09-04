@@ -150,6 +150,13 @@ async def _persist_location_upload(location_key: str, pptx_path: Path, metadata_
 async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event: Dict[str, Any] = None):
     logger = config.logger
     
+    # Send initial status message
+    status_message = await config.slack_client.chat_postMessage(
+        channel=channel,
+        text="⏳ _Please wait..._"
+    )
+    status_ts = status_message.get("ts")
+    
     # Check if user has a pending location addition and uploaded a PPT
     if user_id in pending_location_additions and slack_event and "files" in slack_event:
         pending_data = pending_location_additions[user_id]
@@ -202,6 +209,9 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 # Refresh templates
                 config.refresh_templates()
                 
+                # Delete status message
+                await config.slack_client.chat_delete(channel=channel, ts=status_ts)
+                
                 await config.slack_client.chat_postMessage(
                     channel=channel,
                     text=config.markdown_to_slack(
@@ -212,6 +222,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 return
             except Exception as e:
                 logger.error(f"Failed to save location: {e}")
+                await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                 await config.slack_client.chat_postMessage(
                     channel=channel,
                     text=config.markdown_to_slack("❌ **Error:** Failed to save the location. Please try again.")
@@ -225,6 +236,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         else:
             # No PPT file found, cancel the addition
             del pending_location_additions[user_id]
+            await config.slack_client.chat_delete(channel=channel, ts=status_ts)
             await config.slack_client.chat_postMessage(
                 channel=channel,
                 text=config.markdown_to_slack(
@@ -468,12 +480,20 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         res = await config.openai_client.responses.create(model=config.OPENAI_MODEL, input=messages, tools=tools, tool_choice="auto")
 
         if not res.output or len(res.output) == 0:
+            await config.slack_client.chat_delete(channel=channel, ts=status_ts)
             await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("I can help with proposals or add locations. Say 'add location'."))
             return
 
         msg = res.output[0]
         if msg.type == "function_call":
             if msg.name == "get_separate_proposals":
+                # Update status to Building Proposal
+                await config.slack_client.chat_update(
+                    channel=channel,
+                    ts=status_ts,
+                    text="⏳ _Building Proposal..._"
+                )
+                
                 args = json.loads(msg.arguments)
                 proposals_data = args.get("proposals", [])
                 client_name = args.get("client_name") or "Unknown Client"
@@ -483,11 +503,19 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 logger.info(f"[SEPARATE] Client: {client_name}, User: {user_id}")
 
                 if not proposals_data:
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** No proposals data provided"))
                     return
                 
                 result = await process_proposals(proposals_data, "separate", None, user_id, client_name)
             elif msg.name == "get_combined_proposal":
+                # Update status to Building Proposal
+                await config.slack_client.chat_update(
+                    channel=channel,
+                    ts=status_ts,
+                    text="⏳ _Building Proposal..._"
+                )
+                
                 args = json.loads(msg.arguments)
                 proposals_data = args.get("proposals", [])
                 combined_net_rate = args.get("combined_net_rate", None)
@@ -499,12 +527,15 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 logger.info(f"[COMBINED] Client: {client_name}, User: {user_id}")
 
                 if not proposals_data:
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** No proposals data provided"))
                     return
                 elif not combined_net_rate:
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** Combined package requires a combined net rate"))
                     return
                 elif len(proposals_data) < 2:
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** Combined package requires at least 2 locations"))
                     return
                 
@@ -520,6 +551,9 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
             if msg.name in ["get_separate_proposals", "get_combined_proposal"] and 'result' in locals():
                 logger.info(f"[RESULT] Processing result: {result}")
                 if result["success"]:
+                    # Delete status message before uploading files
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
+                    
                     if result.get("is_combined"):
                         logger.info(f"[RESULT] Combined package - PDF: {result.get('pdf_filename')}")
                         await config.slack_client.files_upload_v2(channel=channel, file=result["pdf_path"], filename=result["pdf_filename"], initial_comment=config.markdown_to_slack(f"📦 **Combined Package Proposal**\n📍 Locations: {result['locations']}"))
@@ -544,21 +578,25 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                         except: pass
                 else:
                     logger.error(f"[RESULT] Error: {result.get('error')}")
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"❌ **Error:** {result['error']}"))
 
             elif msg.name == "refresh_templates":
                 config.refresh_templates()
+                await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                 await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("✅ Templates refreshed successfully."))
 
             elif msg.name == "edit_task_flow":
                 args = json.loads(msg.arguments)
                 task_number = int(args.get("task_number"))
                 task_data = args.get("task_data", {})
+                await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                 await handle_edit_task_flow(channel, user_id, user_input, task_number, task_data)
 
             elif msg.name == "add_location":
                 # Admin permission gate
                 if not config.is_admin(user_id):
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** You need admin privileges to add locations."))
                     return
 
@@ -566,12 +604,14 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 location_key = args.get("location_key", "").strip().lower().replace(" ", "_")
                 
                 if not location_key:
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** Location key is required."))
                     return
 
                 # Check if location already exists
                 mapping = config.get_location_mapping()
                 if location_key in mapping:
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"⚠️ Location `{location_key}` already exists. Please use a different key."))
                     return
                 
@@ -612,6 +652,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                         missing.append("upload_fee")
                 
                 if missing:
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(
                         channel=channel,
                         text=config.markdown_to_slack(f"❌ **Error:** Missing required fields: {', '.join(missing)}")
@@ -656,6 +697,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 
                 summary_text += "\n📎 **Please upload the PowerPoint template file now.**"
                 
+                await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                 await config.slack_client.chat_postMessage(
                     channel=channel,
                     text=config.markdown_to_slack(summary_text)
@@ -664,6 +706,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
 
             elif msg.name == "list_locations":
                 names = config.available_location_names()
+                await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                 if not names:
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("📍 No locations available. Use **'add location'** to add one."))
                 else:
@@ -677,6 +720,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 logger.info(f"[EXCEL_EXPORT] User {user_id} admin status: {is_admin_user}")
                 
                 if not is_admin_user:
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** You need admin privileges to export the database."))
                     return
                     
@@ -688,6 +732,9 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                     # Get file size for display
                     file_size = os.path.getsize(excel_path)
                     size_mb = file_size / (1024 * 1024)
+                    
+                    # Delete status message before uploading file
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     
                     await config.slack_client.files_upload_v2(
                         channel=channel,
@@ -708,6 +755,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                         
                 except Exception as e:
                     logger.error(f"[EXCEL_EXPORT] Error: {e}", exc_info=True)
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(
                         channel=channel,
                         text=config.markdown_to_slack("❌ **Error:** Failed to export database to Excel. Please try again.")
@@ -736,6 +784,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                     else:
                         message += "_No proposals generated yet._"
                     
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(
                         channel=channel,
                         text=config.markdown_to_slack(message)
@@ -743,6 +792,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                     
                 except Exception as e:
                     logger.error(f"[STATS] Error: {e}", exc_info=True)
+                    await config.slack_client.chat_delete(channel=channel, ts=status_ts)
                     await config.slack_client.chat_postMessage(
                         channel=channel,
                         text=config.markdown_to_slack("❌ **Error:** Failed to retrieve statistics. Please try again.")
@@ -759,10 +809,18 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
             import re
             formatted_reply = re.sub(r'^(For .+:)$', r'**\1**', formatted_reply, flags=re.MULTILINE)
             formatted_reply = re.sub(r'^([A-Z][A-Z\s]+:)$', r'**\1**', formatted_reply, flags=re.MULTILINE)
+            # Delete status message before sending reply
+            await config.slack_client.chat_delete(channel=channel, ts=status_ts)
             await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(formatted_reply))
 
         user_history[user_id] = history[-10:]
 
     except Exception as e:
         config.logger.error(f"LLM loop error: {e}", exc_info=True)
+        # Try to delete status message if it exists
+        try:
+            if 'status_ts' in locals() and status_ts:
+                await config.slack_client.chat_delete(channel=channel, ts=status_ts)
+        except:
+            pass
         await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack("❌ **Error:** Something went wrong. Please try again.")) 
