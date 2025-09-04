@@ -10,21 +10,35 @@ from pypdf import PdfReader, PdfWriter
 import config
 
 
-async def extract_first_and_last_slide_as_pdfs(pptx_path: str) -> Tuple[str, str]:
+async def extract_first_and_last_slide_as_pdfs(file_path: str) -> Tuple[str, str]:
     """
-    Extract first and last slides as separate PDFs without re-saving the PowerPoint.
-    This avoids quality degradation from python-pptx re-saving.
+    Extract first and last slides as separate PDFs.
+    Can handle both PowerPoint files (converts to PDF first) and existing PDF files.
     
+    Args:
+        file_path: Path to either a .pptx or .pdf file
+        
     Returns: (intro_pdf_path, outro_pdf_path)
     """
     logger = config.logger
-    logger.info(f"[EXTRACT_SLIDES] Extracting first and last slides from: {pptx_path}")
+    logger.info(f"[EXTRACT_SLIDES] Extracting first and last slides from: {file_path}")
     
     async with _CONVERT_SEMAPHORE:
-        # First, convert the entire PowerPoint to PDF with HIGH QUALITY
-        full_pdf = await asyncio.get_event_loop().run_in_executor(
-            None, convert_pptx_to_pdf, pptx_path, True  # high_quality=True
-        )
+        # Check if it's already a PDF
+        if file_path.lower().endswith('.pdf'):
+            logger.info(f"[EXTRACT_SLIDES] ✅ Input is already a PDF, using directly (no conversion needed)")
+            logger.info(f"[EXTRACT_SLIDES] PDF path: {file_path}")
+            full_pdf = file_path
+            should_delete_full_pdf = False
+        else:
+            # Convert PowerPoint to PDF with HIGH QUALITY
+            logger.info(f"[EXTRACT_SLIDES] 🔄 Converting PowerPoint to PDF with HIGH QUALITY")
+            logger.info(f"[EXTRACT_SLIDES] PowerPoint path: {file_path}")
+            full_pdf = await asyncio.get_event_loop().run_in_executor(
+                None, convert_pptx_to_pdf, file_path, True  # high_quality=True
+            )
+            logger.info(f"[EXTRACT_SLIDES] 📄 Conversion complete: {full_pdf}")
+            should_delete_full_pdf = True
         
         try:
             # Read the PDF
@@ -59,8 +73,9 @@ async def extract_first_and_last_slide_as_pdfs(pptx_path: str) -> Tuple[str, str
             return intro_file.name, outro_file.name
             
         finally:
-            # Clean up the full PDF
-            try:
-                os.unlink(full_pdf)
-            except:
-                pass
+            # Only clean up the full PDF if we created it (from PowerPoint conversion)
+            if should_delete_full_pdf:
+                try:
+                    os.unlink(full_pdf)
+                except:
+                    pass

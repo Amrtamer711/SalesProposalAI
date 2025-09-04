@@ -27,10 +27,13 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
     """Find the first digital location in the proposals for intro/outro slides, or any location if no digital found."""
     logger = config.logger
     
+    logger.info(f"[INTRO_OUTRO] Searching for digital location template from {len(proposals_data)} proposals")
+    
     # First, look for digital locations
     mapping = config.get_location_mapping()
-    for proposal in proposals_data:
+    for idx, proposal in enumerate(proposals_data):
         location = proposal.get("location", "").lower().strip()
+        logger.info(f"[INTRO_OUTRO] Checking proposal {idx+1}: location='{location}'")
         
         # Get the actual key from display name or direct match
         matched_key = config.get_location_key_from_display_name(location)
@@ -44,13 +47,20 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
         if matched_key:
             location_meta = config.LOCATION_METADATA.get(matched_key, {})
             display_type = location_meta.get('display_type', 'Digital')
+            series = location_meta.get('series', '')
+            logger.info(f"[INTRO_OUTRO] Matched key '{matched_key}' - display_type: '{display_type}', series: '{series}'")
+            
             if display_type == 'Digital':
-                logger.info(f"[INTRO_OUTRO] Using digital location for intro/outro: {matched_key}")
-                return str(config.TEMPLATES_DIR / mapping[matched_key])
+                template_path = str(config.TEMPLATES_DIR / mapping[matched_key])
+                logger.info(f"[INTRO_OUTRO] 🎯 Found digital location for intro/outro: {matched_key}")
+                logger.info(f"[INTRO_OUTRO] Template path: {template_path}")
+                logger.info(f"[INTRO_OUTRO] Series: '{series}' {'(LANDMARK!)' if 'Landmark' in series else ''}")
+                return template_path
     
     # If no digital location found, use the first location from proposals
     if proposals_data:
         first_location = proposals_data[0].get("location", "").lower().strip()
+        logger.info(f"[INTRO_OUTRO] No digital location found, checking first location: '{first_location}'")
         
         # Get the actual key from display name or direct match
         matched_key = config.get_location_key_from_display_name(first_location)
@@ -62,10 +72,15 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
                     break
         
         if matched_key:
-            logger.info(f"[INTRO_OUTRO] No digital location found, using first location: {matched_key}")
-            return str(config.TEMPLATES_DIR / mapping[matched_key])
+            location_meta = config.LOCATION_METADATA.get(matched_key, {})
+            series = location_meta.get('series', '')
+            template_path = str(config.TEMPLATES_DIR / mapping[matched_key])
+            logger.info(f"[INTRO_OUTRO] 📍 Using first location: {matched_key}")
+            logger.info(f"[INTRO_OUTRO] Template path: {template_path}")
+            logger.info(f"[INTRO_OUTRO] Series: '{series}' {'(LANDMARK!)' if 'Landmark' in series else ''}")
+            return template_path
     
-    logger.info(f"[INTRO_OUTRO] No suitable location found for intro/outro")
+    logger.info(f"[INTRO_OUTRO] ❌ No suitable location found for intro/outro")
     return None
 
 
@@ -228,8 +243,40 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
     if intro_outro_template:
         logger.info(f"[COMBINED] Creating intro/outro from: {intro_outro_template}")
         
-        # Extract first and last slides as PDFs without quality loss
-        intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
+        # Check if we should use the pre-made Landmark series PDF
+        use_landmark_pdf = False
+        
+        # Check if the template is from Landmark series
+        logger.info(f"[COMBINED] Checking if template is Landmark series: {intro_outro_template}")
+        for key, path in config.get_location_mapping().items():
+            full_path = str(config.TEMPLATES_DIR / path)
+            if full_path == intro_outro_template:
+                location_meta = config.LOCATION_METADATA.get(key, {})
+                series = location_meta.get('series', '')
+                logger.info(f"[COMBINED] Found matching location '{key}' with series: '{series}'")
+                if 'Landmark' in series:
+                    use_landmark_pdf = True
+                    logger.info(f"[COMBINED] ✅ LANDMARK SERIES DETECTED! Will use pre-made PDF for intro/outro")
+                    break
+                else:
+                    logger.info(f"[COMBINED] Location '{key}' is not Landmark series (series: '{series}')")
+        
+        if use_landmark_pdf:
+            # Use the pre-made high-quality Landmark series PDF
+            landmark_pdf_path = config.TEMPLATES_DIR / "intro_outro" / "landmark_series.pdf"
+            logger.info(f"[COMBINED] 🎯 USING PRE-MADE LANDMARK PDF: {landmark_pdf_path}")
+            if landmark_pdf_path.exists():
+                logger.info(f"[COMBINED] ✅ Pre-made PDF found, extracting intro/outro pages")
+                # Extract first and last pages from the pre-made PDF
+                intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(str(landmark_pdf_path))
+                logger.info(f"[COMBINED] ✅ Successfully extracted intro/outro from pre-made PDF")
+            else:
+                logger.warning(f"[COMBINED] ❌ Landmark series PDF not found at {landmark_pdf_path}, falling back to conversion")
+                intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
+        else:
+            # Use the regular extraction method
+            logger.info(f"[COMBINED] 📄 Using regular PowerPoint-to-PDF conversion for intro/outro")
+            intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
         
         # Insert intro at beginning and outro at end
         pdf_files.insert(0, intro_pdf)
@@ -438,8 +485,40 @@ async def process_proposals(
     if len(pdf_files) > 1 and intro_outro_template:
             logger.info(f"[PROCESS] Creating intro/outro from: {intro_outro_template}")
             
-            # Extract first and last slides as PDFs without quality loss
-            intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
+            # Check if we should use the pre-made Landmark series PDF
+            use_landmark_pdf = False
+            
+            # Check if the template is from Landmark series
+            logger.info(f"[PROCESS] Checking if template is Landmark series: {intro_outro_template}")
+            for key, path in config.get_location_mapping().items():
+                full_path = str(config.TEMPLATES_DIR / path)
+                if full_path == intro_outro_template:
+                    location_meta = config.LOCATION_METADATA.get(key, {})
+                    series = location_meta.get('series', '')
+                    logger.info(f"[PROCESS] Found matching location '{key}' with series: '{series}'")
+                    if 'Landmark' in series:
+                        use_landmark_pdf = True
+                        logger.info(f"[PROCESS] ✅ LANDMARK SERIES DETECTED! Will use pre-made PDF for intro/outro")
+                        break
+                    else:
+                        logger.info(f"[PROCESS] Location '{key}' is not Landmark series (series: '{series}')")
+            
+            if use_landmark_pdf:
+                # Use the pre-made high-quality Landmark series PDF
+                landmark_pdf_path = config.TEMPLATES_DIR / "intro_outro" / "landmark_series.pdf"
+                logger.info(f"[PROCESS] 🎯 USING PRE-MADE LANDMARK PDF: {landmark_pdf_path}")
+                if landmark_pdf_path.exists():
+                    logger.info(f"[PROCESS] ✅ Pre-made PDF found, extracting intro/outro pages")
+                    # Extract first and last pages from the pre-made PDF
+                    intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(str(landmark_pdf_path))
+                    logger.info(f"[PROCESS] ✅ Successfully extracted intro/outro from pre-made PDF")
+                else:
+                    logger.warning(f"[PROCESS] ❌ Landmark series PDF not found at {landmark_pdf_path}, falling back to conversion")
+                    intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
+            else:
+                # Use the regular extraction method
+                logger.info(f"[PROCESS] 📄 Using regular PowerPoint-to-PDF conversion for intro/outro")
+                intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
             
             # Insert intro at beginning and outro at end
             pdf_files.insert(0, intro_pdf)
