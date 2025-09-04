@@ -308,8 +308,54 @@ def markdown_to_slack(text: str) -> str:
     - ## Subheader -> *Subheader*
     - - bullet -> • bullet
     - 1. numbered -> 1. numbered
+    - Tables -> Slack-friendly format
     """
     import re
+    
+    # Convert markdown tables to Slack-friendly format
+    lines = text.split('\n')
+    result_lines = []
+    i = 0
+    
+    while i < len(lines):
+        line = lines[i]
+        
+        # Check if this is the start of a table
+        if ('|' in line and line.strip().startswith('|') and line.strip().endswith('|') 
+            and not re.match(r'^\s*\|[\s\-:]+\|.*\|[\s\-:]*$', line)):
+            
+            # Start collecting table data
+            table_data = []
+            
+            # Add the header row
+            cells = [cell.strip() for cell in line.split('|')[1:-1]]
+            table_data.append(cells)
+            i += 1
+            
+            # Skip the separator line if present
+            if i < len(lines) and re.match(r'^\s*\|[\s\-:]+\|.*\|[\s\-:]*$', lines[i]):
+                i += 1
+            
+            # Collect all table rows
+            while i < len(lines):
+                line = lines[i]
+                if ('|' in line and line.strip().startswith('|') and line.strip().endswith('|')
+                    and not re.match(r'^\s*\|[\s\-:]+\|.*\|[\s\-:]*$', line)):
+                    cells = [cell.strip() for cell in line.split('|')[1:-1]]
+                    table_data.append(cells)
+                    i += 1
+                else:
+                    break
+            
+            # Format the table
+            if table_data:
+                formatted_table = _format_table_for_slack(table_data)
+                result_lines.append(formatted_table)
+        else:
+            result_lines.append(line)
+            i += 1
+    
+    text = '\n'.join(result_lines)
     
     # Convert headers
     text = re.sub(r'^### (.+)$', r'*\1*', text, flags=re.MULTILINE)
@@ -335,4 +381,41 @@ def markdown_to_slack(text: str) -> str:
     # Ensure proper line breaks for lists
     text = re.sub(r'\n(?=\d+\.|•)', '\n', text)
     
-    return text 
+    return text
+
+
+def _format_table_for_slack(table_data: list) -> str:
+    """Format table data for Slack display using monospace blocks."""
+    if not table_data:
+        return ""
+    
+    # Calculate column widths
+    col_widths = []
+    num_cols = len(table_data[0])
+    
+    for col in range(num_cols):
+        max_width = max(len(str(row[col])) for row in table_data if col < len(row))
+        col_widths.append(max_width)
+    
+    # Format as monospace block
+    formatted_lines = ["```"]
+    
+    # Format header
+    if table_data:
+        header = table_data[0]
+        header_line = " | ".join(str(cell).ljust(width) for cell, width in zip(header, col_widths))
+        formatted_lines.append(header_line)
+        
+        # Add separator
+        separator = "-+-".join("-" * width for width in col_widths)
+        formatted_lines.append(separator)
+        
+        # Format data rows
+        for row in table_data[1:]:
+            row_line = " | ".join(str(row[i] if i < len(row) else "").ljust(width) 
+                                 for i, width in enumerate(col_widths))
+            formatted_lines.append(row_line)
+    
+    formatted_lines.append("```")
+    
+    return "\n".join(formatted_lines) 
