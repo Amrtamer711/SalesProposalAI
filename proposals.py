@@ -1,6 +1,7 @@
 import os
 import asyncio
 import tempfile
+import shutil
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
@@ -10,7 +11,6 @@ import config
 import db
 from pptx_utils import create_financial_proposal_slide, create_combined_financial_proposal_slide
 from pdf_utils import convert_pptx_to_pdf, merge_pdfs, remove_slides_and_convert_to_pdf
-from pdf_slide_utils import extract_first_and_last_slide_as_pdfs
 
 
 def _template_path_for_key(key: str) -> Path:
@@ -27,13 +27,10 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
     """Find the first digital location in the proposals for intro/outro slides, or any location if no digital found."""
     logger = config.logger
     
-    logger.info(f"[INTRO_OUTRO] Searching for digital location template from {len(proposals_data)} proposals")
-    
     # First, look for digital locations
     mapping = config.get_location_mapping()
-    for idx, proposal in enumerate(proposals_data):
+    for proposal in proposals_data:
         location = proposal.get("location", "").lower().strip()
-        logger.info(f"[INTRO_OUTRO] Checking proposal {idx+1}: location='{location}'")
         
         # Get the actual key from display name or direct match
         matched_key = config.get_location_key_from_display_name(location)
@@ -47,20 +44,13 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
         if matched_key:
             location_meta = config.LOCATION_METADATA.get(matched_key, {})
             display_type = location_meta.get('display_type', 'Digital')
-            series = location_meta.get('series', '')
-            logger.info(f"[INTRO_OUTRO] Matched key '{matched_key}' - display_type: '{display_type}', series: '{series}'")
-            
             if display_type == 'Digital':
-                template_path = str(config.TEMPLATES_DIR / mapping[matched_key])
-                logger.info(f"[INTRO_OUTRO] 🎯 Found digital location for intro/outro: {matched_key}")
-                logger.info(f"[INTRO_OUTRO] Template path: {template_path}")
-                logger.info(f"[INTRO_OUTRO] Series: '{series}' {'(LANDMARK!)' if 'Landmark' in series else ''}")
-                return template_path
+                logger.info(f"[INTRO_OUTRO] Using digital location for intro/outro: {matched_key}")
+                return str(config.TEMPLATES_DIR / mapping[matched_key])
     
     # If no digital location found, use the first location from proposals
     if proposals_data:
         first_location = proposals_data[0].get("location", "").lower().strip()
-        logger.info(f"[INTRO_OUTRO] No digital location found, checking first location: '{first_location}'")
         
         # Get the actual key from display name or direct match
         matched_key = config.get_location_key_from_display_name(first_location)
@@ -72,15 +62,10 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
                     break
         
         if matched_key:
-            location_meta = config.LOCATION_METADATA.get(matched_key, {})
-            series = location_meta.get('series', '')
-            template_path = str(config.TEMPLATES_DIR / mapping[matched_key])
-            logger.info(f"[INTRO_OUTRO] 📍 Using first location: {matched_key}")
-            logger.info(f"[INTRO_OUTRO] Template path: {template_path}")
-            logger.info(f"[INTRO_OUTRO] Series: '{series}' {'(LANDMARK!)' if 'Landmark' in series else ''}")
-            return template_path
+            logger.info(f"[INTRO_OUTRO] No digital location found, using first location: {matched_key}")
+            return str(config.TEMPLATES_DIR / mapping[matched_key])
     
-    logger.info(f"[INTRO_OUTRO] ❌ No suitable location found for intro/outro")
+    logger.info(f"[INTRO_OUTRO] No suitable location found for intro/outro")
     return None
 
 
@@ -243,44 +228,46 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
     if intro_outro_template:
         logger.info(f"[COMBINED] Creating intro/outro from: {intro_outro_template}")
         
-        # Check if we should use the pre-made Landmark series PDF
-        use_landmark_pdf = False
+        # Create intro by keeping only the first slide
+        intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+        intro_pptx.close()
+        shutil.copy2(intro_outro_template, intro_pptx.name)
         
-        # Check if the template is from Landmark series
-        logger.info(f"[COMBINED] Checking if template is Landmark series: {intro_outro_template}")
-        for key, path in config.get_location_mapping().items():
-            full_path = str(config.TEMPLATES_DIR / path)
-            if full_path == intro_outro_template:
-                location_meta = config.LOCATION_METADATA.get(key, {})
-                series = location_meta.get('series', '')
-                logger.info(f"[COMBINED] Found matching location '{key}' with series: '{series}'")
-                if 'Landmark' in series:
-                    use_landmark_pdf = True
-                    logger.info(f"[COMBINED] ✅ LANDMARK SERIES DETECTED! Will use pre-made PDF for intro/outro")
-                    break
-                else:
-                    logger.info(f"[COMBINED] Location '{key}' is not Landmark series (series: '{series}')")
+        # Remove all slides except the first
+        pres = Presentation(intro_pptx.name)
+        xml_slides = pres.slides._sldIdLst
+        slides_to_remove = list(xml_slides)[1:]  # All slides except first
+        for slide_id in slides_to_remove:
+            xml_slides.remove(slide_id)
+        pres.save(intro_pptx.name)
         
-        if use_landmark_pdf:
-            # Use the pre-made high-quality Landmark series PDF
-            landmark_pdf_path = config.TEMPLATES_DIR / "intro_outro" / "landmark_series.pdf"
-            logger.info(f"[COMBINED] 🎯 USING PRE-MADE LANDMARK PDF: {landmark_pdf_path}")
-            if landmark_pdf_path.exists():
-                logger.info(f"[COMBINED] ✅ Pre-made PDF found, extracting intro/outro pages")
-                # Extract first and last pages from the pre-made PDF
-                intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(str(landmark_pdf_path))
-                logger.info(f"[COMBINED] ✅ Successfully extracted intro/outro from pre-made PDF")
-            else:
-                logger.warning(f"[COMBINED] ❌ Landmark series PDF not found at {landmark_pdf_path}, falling back to conversion")
-                intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
-        else:
-            # Use the regular extraction method
-            logger.info(f"[COMBINED] 📄 Using regular PowerPoint-to-PDF conversion for intro/outro")
-            intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
+        intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
+        
+        # Create outro by keeping only the last slide
+        outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+        outro_pptx.close()
+        shutil.copy2(intro_outro_template, outro_pptx.name)
+        
+        # Remove all slides except the last
+        pres = Presentation(outro_pptx.name)
+        xml_slides = pres.slides._sldIdLst
+        slides_to_remove = list(xml_slides)[:-1]  # All slides except last
+        for slide_id in slides_to_remove:
+            xml_slides.remove(slide_id)
+        pres.save(outro_pptx.name)
+        
+        outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
         
         # Insert intro at beginning and outro at end
         pdf_files.insert(0, intro_pdf)
         pdf_files.append(outro_pdf)
+        
+        # Clean up temp files
+        try:
+            os.unlink(intro_pptx.name)
+            os.unlink(outro_pptx.name)
+        except Exception as e:
+            logger.warning(f"Failed to clean up intro/outro files: {e}")
 
     merged_pdf = await loop.run_in_executor(None, merge_pdfs, pdf_files)
     for pdf_file in pdf_files:
@@ -485,44 +472,46 @@ async def process_proposals(
     if len(pdf_files) > 1 and intro_outro_template:
             logger.info(f"[PROCESS] Creating intro/outro from: {intro_outro_template}")
             
-            # Check if we should use the pre-made Landmark series PDF
-            use_landmark_pdf = False
+            # Create intro by keeping only the first slide
+            intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+            intro_pptx.close()
+            shutil.copy2(intro_outro_template, intro_pptx.name)
             
-            # Check if the template is from Landmark series
-            logger.info(f"[PROCESS] Checking if template is Landmark series: {intro_outro_template}")
-            for key, path in config.get_location_mapping().items():
-                full_path = str(config.TEMPLATES_DIR / path)
-                if full_path == intro_outro_template:
-                    location_meta = config.LOCATION_METADATA.get(key, {})
-                    series = location_meta.get('series', '')
-                    logger.info(f"[PROCESS] Found matching location '{key}' with series: '{series}'")
-                    if 'Landmark' in series:
-                        use_landmark_pdf = True
-                        logger.info(f"[PROCESS] ✅ LANDMARK SERIES DETECTED! Will use pre-made PDF for intro/outro")
-                        break
-                    else:
-                        logger.info(f"[PROCESS] Location '{key}' is not Landmark series (series: '{series}')")
+            # Remove all slides except the first
+            pres = Presentation(intro_pptx.name)
+            xml_slides = pres.slides._sldIdLst
+            slides_to_remove = list(xml_slides)[1:]  # All slides except first
+            for slide_id in slides_to_remove:
+                xml_slides.remove(slide_id)
+            pres.save(intro_pptx.name)
             
-            if use_landmark_pdf:
-                # Use the pre-made high-quality Landmark series PDF
-                landmark_pdf_path = config.TEMPLATES_DIR / "intro_outro" / "landmark_series.pdf"
-                logger.info(f"[PROCESS] 🎯 USING PRE-MADE LANDMARK PDF: {landmark_pdf_path}")
-                if landmark_pdf_path.exists():
-                    logger.info(f"[PROCESS] ✅ Pre-made PDF found, extracting intro/outro pages")
-                    # Extract first and last pages from the pre-made PDF
-                    intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(str(landmark_pdf_path))
-                    logger.info(f"[PROCESS] ✅ Successfully extracted intro/outro from pre-made PDF")
-                else:
-                    logger.warning(f"[PROCESS] ❌ Landmark series PDF not found at {landmark_pdf_path}, falling back to conversion")
-                    intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
-            else:
-                # Use the regular extraction method
-                logger.info(f"[PROCESS] 📄 Using regular PowerPoint-to-PDF conversion for intro/outro")
-                intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
+            intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
+            
+            # Create outro by keeping only the last slide
+            outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+            outro_pptx.close()
+            shutil.copy2(intro_outro_template, outro_pptx.name)
+            
+            # Remove all slides except the last
+            pres = Presentation(outro_pptx.name)
+            xml_slides = pres.slides._sldIdLst
+            slides_to_remove = list(xml_slides)[:-1]  # All slides except last
+            for slide_id in slides_to_remove:
+                xml_slides.remove(slide_id)
+            pres.save(outro_pptx.name)
+            
+            outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
             
             # Insert intro at beginning and outro at end
             pdf_files.insert(0, intro_pdf)
             pdf_files.append(outro_pdf)
+            
+            # Clean up temp files
+            try:
+                os.unlink(intro_pptx.name)
+                os.unlink(outro_pptx.name)
+            except:
+                pass
 
     if is_single:
         totals = individual_files[0].get("totals", [])
