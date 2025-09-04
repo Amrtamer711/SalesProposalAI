@@ -49,9 +49,14 @@ async def periodic_cleanup():
             expired_users = []
             for uid, history in user_history.items():
                 if history and hasattr(history[-1], 'get'):
-                    last_time = history[-1].get('timestamp', datetime.now())
-                    if last_time < cutoff:
-                        expired_users.append(uid)
+                    timestamp_str = history[-1].get('timestamp')
+                    if timestamp_str:
+                        try:
+                            last_time = datetime.fromisoformat(timestamp_str)
+                            if last_time < cutoff:
+                                expired_users.append(uid)
+                        except:
+                            pass
             
             for uid in expired_users:
                 del user_history[uid]

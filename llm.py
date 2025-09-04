@@ -355,9 +355,11 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
     )
 
     history = user_history.get(user_id, [])
-    history.append({"role": "user", "content": user_input, "timestamp": datetime.now()})
+    history.append({"role": "user", "content": user_input, "timestamp": datetime.now().isoformat()})
     history = history[-10:]
-    messages = [{"role": "developer", "content": prompt}] + history
+    # Remove timestamp from messages sent to OpenAI
+    messages_for_openai = [{"role": msg["role"], "content": msg["content"]} for msg in history if "role" in msg and "content" in msg]
+    messages = [{"role": "developer", "content": prompt}] + messages_for_openai
 
     tools = [
         {
