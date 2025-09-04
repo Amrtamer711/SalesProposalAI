@@ -58,10 +58,13 @@ def _get_digital_location_info(proposals_data: List[Dict[str, Any]]) -> Optional
     """Find the first digital location in the proposals and return its info for intro/outro slides."""
     logger = config.logger
     
+    logger.info(f"[INTRO_OUTRO] 🔍 Searching for digital location from {len(proposals_data)} proposals")
+    
     # First, look for digital locations
     mapping = config.get_location_mapping()
-    for proposal in proposals_data:
+    for idx, proposal in enumerate(proposals_data):
         location = proposal.get("location", "").lower().strip()
+        logger.info(f"[INTRO_OUTRO] Checking proposal {idx+1}: location='{location}'")
         
         # Get the actual key from display name or direct match
         matched_key = config.get_location_key_from_display_name(location)
@@ -75,9 +78,16 @@ def _get_digital_location_info(proposals_data: List[Dict[str, Any]]) -> Optional
         if matched_key:
             location_meta = config.LOCATION_METADATA.get(matched_key, {})
             display_type = location_meta.get('display_type', 'Digital')
+            series = location_meta.get('series', '')
+            display_name = location_meta.get('display_name', matched_key)
+            
+            logger.info(f"[INTRO_OUTRO] Found location: '{display_name}' (key: {matched_key})")
+            logger.info(f"[INTRO_OUTRO]   - Display Type: {display_type}")
+            logger.info(f"[INTRO_OUTRO]   - Series: {series}")
+            
             if display_type == 'Digital':
-                logger.info(f"[INTRO_OUTRO] Found digital location for intro/outro: {matched_key}")
-                series = location_meta.get('series', '')
+                logger.info(f"[INTRO_OUTRO] ✅ DIGITAL LOCATION FOUND! Using '{display_name}' for intro/outro")
+                logger.info(f"[INTRO_OUTRO] 📂 Series: '{series}'")
                 return {
                     'key': matched_key,
                     'series': series,
@@ -86,8 +96,11 @@ def _get_digital_location_info(proposals_data: List[Dict[str, Any]]) -> Optional
                 }
     
     # If no digital location found, use the first location from proposals
+    logger.info(f"[INTRO_OUTRO] ❌ No digital location found in proposals")
+    
     if proposals_data:
         first_location = proposals_data[0].get("location", "").lower().strip()
+        logger.info(f"[INTRO_OUTRO] 📍 Falling back to first location: '{first_location}'")
         
         # Get the actual key from display name or direct match
         matched_key = config.get_location_key_from_display_name(first_location)
@@ -101,7 +114,12 @@ def _get_digital_location_info(proposals_data: List[Dict[str, Any]]) -> Optional
         if matched_key:
             location_meta = config.LOCATION_METADATA.get(matched_key, {})
             series = location_meta.get('series', '')
-            logger.info(f"[INTRO_OUTRO] No digital location found, using first location: {matched_key}")
+            display_name = location_meta.get('display_name', matched_key)
+            display_type = location_meta.get('display_type', 'Unknown')
+            
+            logger.info(f"[INTRO_OUTRO] 🎯 Using first location: '{display_name}' (key: {matched_key})")
+            logger.info(f"[INTRO_OUTRO]   - Display Type: {display_type}")
+            logger.info(f"[INTRO_OUTRO]   - Series: {series}")
             return {
                 'key': matched_key,
                 'series': series,
@@ -109,7 +127,7 @@ def _get_digital_location_info(proposals_data: List[Dict[str, Any]]) -> Optional
                 'metadata': location_meta
             }
     
-    logger.info(f"[INTRO_OUTRO] No suitable location found for intro/outro")
+    logger.info(f"[INTRO_OUTRO] ⚠️ No suitable location found for intro/outro")
     return None
 
 
@@ -271,7 +289,12 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
     # For combined proposals, create intro and outro slides
     if intro_outro_info:
         series = intro_outro_info.get('series', '')
-        logger.info(f"[COMBINED] Creating intro/outro for series: {series}")
+        location_key = intro_outro_info.get('key', '')
+        display_name = intro_outro_info.get('metadata', {}).get('display_name', location_key)
+        
+        logger.info(f"[COMBINED] 🎬 Creating intro/outro slides")
+        logger.info(f"[COMBINED] 📍 Selected location: '{display_name}' (key: {location_key})")
+        logger.info(f"[COMBINED] 📂 Series: '{series}'")
         
         # Check for pre-made PDFs in intro_outro directory
         intro_outro_dir = config.TEMPLATES_DIR / "intro_outro"
@@ -280,12 +303,15 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
         # Map series to PDF filenames
         if 'Landmark' in series:
             pdf_path = intro_outro_dir / "landmark_series.pdf"
+            logger.info(f"[COMBINED] 🏆 LANDMARK SERIES DETECTED! Looking for pre-made PDF...")
         elif 'Digital Icons' in series:
             pdf_path = intro_outro_dir / "digital_icons.pdf"
-        # Add more series mappings as needed
+            logger.info(f"[COMBINED] 💎 DIGITAL ICONS SERIES DETECTED! Looking for pre-made PDF...")
+        else:
+            logger.info(f"[COMBINED] ❓ No pre-made PDF mapping for series '{series}'")
         
         if pdf_path and pdf_path.exists():
-            logger.info(f"[COMBINED] Using pre-made PDF for intro/outro: {pdf_path}")
+            logger.info(f"[COMBINED] ✅ PRE-MADE PDF FOUND! Using: {pdf_path}")
             # Extract first page for intro
             intro_pdf = _extract_pages_from_pdf(str(pdf_path), [0])
             # Extract last page for outro (assuming 2-page PDF)
@@ -294,8 +320,11 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
             outro_pdf = _extract_pages_from_pdf(str(pdf_path), [last_page])
         else:
             # Fall back to PowerPoint extraction
-            logger.info(f"[COMBINED] No pre-made PDF found, using PowerPoint extraction")
+            if pdf_path:
+                logger.info(f"[COMBINED] ❌ PRE-MADE PDF NOT FOUND at: {pdf_path}")
+            logger.info(f"[COMBINED] 🔄 FALLING BACK to PowerPoint extraction")
             template_path = intro_outro_info['template_path']
+            logger.info(f"[COMBINED] 📄 Using PowerPoint template: {template_path}")
             
             # Create intro by keeping only the first slide
             intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
@@ -540,7 +569,12 @@ async def process_proposals(
     # For multiple proposals, create intro and outro slides
     if len(pdf_files) > 1 and intro_outro_info:
             series = intro_outro_info.get('series', '')
-            logger.info(f"[PROCESS] Creating intro/outro for series: {series}")
+            location_key = intro_outro_info.get('key', '')
+            display_name = intro_outro_info.get('metadata', {}).get('display_name', location_key)
+            
+            logger.info(f"[PROCESS] 🎬 Creating intro/outro slides")
+            logger.info(f"[PROCESS] 📍 Selected location: '{display_name}' (key: {location_key})")
+            logger.info(f"[PROCESS] 📂 Series: '{series}'")
             
             # Check for pre-made PDFs in intro_outro directory
             intro_outro_dir = config.TEMPLATES_DIR / "intro_outro"
@@ -549,12 +583,15 @@ async def process_proposals(
             # Map series to PDF filenames
             if 'Landmark' in series:
                 pdf_path = intro_outro_dir / "landmark_series.pdf"
+                logger.info(f"[PROCESS] 🏆 LANDMARK SERIES DETECTED! Looking for pre-made PDF...")
             elif 'Digital Icons' in series:
                 pdf_path = intro_outro_dir / "digital_icons.pdf"
-            # Add more series mappings as needed
+                logger.info(f"[PROCESS] 💎 DIGITAL ICONS SERIES DETECTED! Looking for pre-made PDF...")
+            else:
+                logger.info(f"[PROCESS] ❓ No pre-made PDF mapping for series '{series}'")
             
             if pdf_path and pdf_path.exists():
-                logger.info(f"[PROCESS] Using pre-made PDF for intro/outro: {pdf_path}")
+                logger.info(f"[PROCESS] ✅ PRE-MADE PDF FOUND! Using: {pdf_path}")
                 # Extract first page for intro
                 intro_pdf = _extract_pages_from_pdf(str(pdf_path), [0])
                 # Extract last page for outro (assuming 2-page PDF)
@@ -563,8 +600,11 @@ async def process_proposals(
                 outro_pdf = _extract_pages_from_pdf(str(pdf_path), [last_page])
             else:
                 # Fall back to PowerPoint extraction
-                logger.info(f"[PROCESS] No pre-made PDF found, using PowerPoint extraction")
+                if pdf_path:
+                    logger.info(f"[PROCESS] ❌ PRE-MADE PDF NOT FOUND at: {pdf_path}")
+                logger.info(f"[PROCESS] 🔄 FALLING BACK to PowerPoint extraction")
                 template_path = intro_outro_info['template_path']
+                logger.info(f"[PROCESS] 📄 Using PowerPoint template: {template_path}")
                 
                 # Create intro by keeping only the first slide
                 intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
