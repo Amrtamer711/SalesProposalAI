@@ -21,9 +21,9 @@ async def extract_first_and_last_slide_as_pdfs(pptx_path: str) -> Tuple[str, str
     logger.info(f"[EXTRACT_SLIDES] Extracting first and last slides from: {pptx_path}")
     
     async with _CONVERT_SEMAPHORE:
-        # First, convert the entire PowerPoint to PDF
+        # First, convert the entire PowerPoint to PDF with HIGH QUALITY
         full_pdf = await asyncio.get_event_loop().run_in_executor(
-            None, convert_pptx_to_pdf, pptx_path
+            None, convert_pptx_to_pdf, pptx_path, True  # high_quality=True
         )
         
         try:

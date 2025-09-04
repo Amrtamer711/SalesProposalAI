@@ -16,16 +16,23 @@ import config
 _CONVERT_SEMAPHORE = asyncio.Semaphore(int(os.getenv("PDF_CONVERT_CONCURRENCY", "4")))
 
 
-async def convert_pptx_to_pdf_async(pptx_path: str) -> str:
+async def convert_pptx_to_pdf_async(pptx_path: str, high_quality: bool = False) -> str:
     """Async wrapper for PDF conversion with semaphore protection"""
     async with _CONVERT_SEMAPHORE:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, convert_pptx_to_pdf, pptx_path)
+        return await loop.run_in_executor(None, convert_pptx_to_pdf, pptx_path, high_quality)
 
 
-def convert_pptx_to_pdf(pptx_path: str) -> str:
+def convert_pptx_to_pdf(pptx_path: str, high_quality: bool = False) -> str:
+    """
+    Convert PowerPoint to PDF.
+    
+    Args:
+        pptx_path: Path to the PowerPoint file
+        high_quality: If True, use maximum quality settings (for intro/outro slides)
+    """
     logger = config.logger
-    logger.info(f"[PDF_CONVERT] Starting conversion of '{pptx_path}'")
+    logger.info(f"[PDF_CONVERT] Starting conversion of '{pptx_path}' (high_quality={high_quality})")
     
     pdf_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf_file.close()
@@ -49,8 +56,54 @@ def convert_pptx_to_pdf(pptx_path: str) -> str:
         if shutil.which(lo_path) or os.path.exists(lo_path):
             try:
                 logger.info(f"[PDF_CONVERT] Trying LibreOffice at '{lo_path}'")
-                cmd = [lo_path, '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(pdf_file.name), pptx_path]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                
+                # Build command
+                cmd = [
+                    lo_path, 
+                    '--headless',
+                    '--convert-to', 'pdf',
+                    '--outdir', os.path.dirname(pdf_file.name),
+                    pptx_path
+                ]
+                
+                # Set environment for better quality
+                env = os.environ.copy()
+                env['SAL_DISABLE_OPENCL'] = '1'  # Disable OpenCL for better compatibility
+                
+                if high_quality:
+                    # For high quality (intro/outro), use environment variables
+                    logger.info(f"[PDF_CONVERT] Using HIGH QUALITY settings for intro/outro")
+                    env['JPEGOPT_QUALITY'] = '100'  # Maximum JPEG quality
+                    env['PNGOPT_COMPRESSION_LEVEL'] = '0'  # No PNG compression
+                    
+                    # Also try to create a temporary config file for LibreOffice
+                    import configparser
+                    config_dir = tempfile.mkdtemp()
+                    registrymodifications = os.path.join(config_dir, 'registrymodifications.xcu')
+                    
+                    # Write high quality settings
+                    with open(registrymodifications, 'w') as f:
+                        f.write('''<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <item oor:path="/org.openoffice.Office.Common/Filter/PDF/Export">
+    <prop oor:name="Quality" oor:op="fuse"><value>100</value></prop>
+    <prop oor:name="ReduceImageResolution" oor:op="fuse"><value>false</value></prop>
+    <prop oor:name="MaxImageResolution" oor:op="fuse"><value>600</value></prop>
+    <prop oor:name="UseTaggedPDF" oor:op="fuse"><value>false</value></prop>
+  </item>
+</oor:items>''')
+                    
+                    env['HOME'] = config_dir  # LibreOffice will look for config here
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
+                
+                # Clean up temporary config directory if created
+                if high_quality and 'config_dir' in locals():
+                    try:
+                        shutil.rmtree(config_dir)
+                    except:
+                        pass
+                
                 if result.returncode == 0:
                     converted_pdf = os.path.join(
                         os.path.dirname(pdf_file.name),
