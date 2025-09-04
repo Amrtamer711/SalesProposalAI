@@ -1,7 +1,6 @@
 import os
 import asyncio
 import tempfile
-import shutil
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
@@ -11,6 +10,7 @@ import config
 import db
 from pptx_utils import create_financial_proposal_slide, create_combined_financial_proposal_slide
 from pdf_utils import convert_pptx_to_pdf, merge_pdfs, remove_slides_and_convert_to_pdf
+from pdf_slide_utils import extract_first_and_last_slide_as_pdfs
 
 
 def _template_path_for_key(key: str) -> Path:
@@ -228,46 +228,12 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
     if intro_outro_template:
         logger.info(f"[COMBINED] Creating intro/outro from: {intro_outro_template}")
         
-        # Create intro by keeping only the first slide
-        intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-        intro_pptx.close()
-        shutil.copy2(intro_outro_template, intro_pptx.name)
-        
-        # Remove all slides except the first
-        pres = Presentation(intro_pptx.name)
-        xml_slides = pres.slides._sldIdLst
-        slides_to_remove = list(xml_slides)[1:]  # All slides except first
-        for slide_id in slides_to_remove:
-            xml_slides.remove(slide_id)
-        pres.save(intro_pptx.name)
-        
-        intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
-        
-        # Create outro by keeping only the last slide
-        outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-        outro_pptx.close()
-        shutil.copy2(intro_outro_template, outro_pptx.name)
-        
-        # Remove all slides except the last
-        pres = Presentation(outro_pptx.name)
-        xml_slides = pres.slides._sldIdLst
-        slides_to_remove = list(xml_slides)[:-1]  # All slides except last
-        for slide_id in slides_to_remove:
-            xml_slides.remove(slide_id)
-        pres.save(outro_pptx.name)
-        
-        outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
+        # Extract first and last slides as PDFs without quality loss
+        intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
         
         # Insert intro at beginning and outro at end
         pdf_files.insert(0, intro_pdf)
         pdf_files.append(outro_pdf)
-        
-        # Clean up temp files
-        try:
-            os.unlink(intro_pptx.name)
-            os.unlink(outro_pptx.name)
-        except Exception as e:
-            logger.warning(f"Failed to clean up intro/outro files: {e}")
 
     merged_pdf = await loop.run_in_executor(None, merge_pdfs, pdf_files)
     for pdf_file in pdf_files:
@@ -472,46 +438,12 @@ async def process_proposals(
     if len(pdf_files) > 1 and intro_outro_template:
             logger.info(f"[PROCESS] Creating intro/outro from: {intro_outro_template}")
             
-            # Create intro by keeping only the first slide
-            intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-            intro_pptx.close()
-            shutil.copy2(intro_outro_template, intro_pptx.name)
-            
-            # Remove all slides except the first
-            pres = Presentation(intro_pptx.name)
-            xml_slides = pres.slides._sldIdLst
-            slides_to_remove = list(xml_slides)[1:]  # All slides except first
-            for slide_id in slides_to_remove:
-                xml_slides.remove(slide_id)
-            pres.save(intro_pptx.name)
-            
-            intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
-            
-            # Create outro by keeping only the last slide
-            outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-            outro_pptx.close()
-            shutil.copy2(intro_outro_template, outro_pptx.name)
-            
-            # Remove all slides except the last
-            pres = Presentation(outro_pptx.name)
-            xml_slides = pres.slides._sldIdLst
-            slides_to_remove = list(xml_slides)[:-1]  # All slides except last
-            for slide_id in slides_to_remove:
-                xml_slides.remove(slide_id)
-            pres.save(outro_pptx.name)
-            
-            outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
+            # Extract first and last slides as PDFs without quality loss
+            intro_pdf, outro_pdf = await extract_first_and_last_slide_as_pdfs(intro_outro_template)
             
             # Insert intro at beginning and outro at end
             pdf_files.insert(0, intro_pdf)
             pdf_files.append(outro_pdf)
-            
-            # Clean up temp files
-            try:
-                os.unlink(intro_pptx.name)
-                os.unlink(outro_pptx.name)
-            except:
-                pass
 
     if is_single:
         totals = individual_files[0].get("totals", [])

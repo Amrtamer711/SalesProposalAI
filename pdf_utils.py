@@ -201,20 +201,23 @@ async def remove_slides_and_convert_to_pdf(pptx_path: str, remove_first: bool = 
         _sh.copy2(pptx_path, temp_pptx.name)
         logger.info(f"[REMOVE_SLIDES] Created temp file: '{temp_pptx.name}'")
 
-        pres = Presentation(temp_pptx.name)
-        xml_slides = pres.slides._sldIdLst
-        slides_to_remove = []
+        # Only modify if we actually need to remove slides
+        if remove_first or remove_last:
+            pres = Presentation(temp_pptx.name)
+            xml_slides = pres.slides._sldIdLst
+            slides_to_remove = []
 
-        if remove_first and len(pres.slides) > 0:
-            slides_to_remove.append(list(xml_slides)[0])
-        if remove_last and len(pres.slides) > 1:
-            slides_to_remove.append(list(xml_slides)[-1])
+            if remove_first and len(pres.slides) > 0:
+                slides_to_remove.append(list(xml_slides)[0])
+            if remove_last and len(pres.slides) > 1:
+                slides_to_remove.append(list(xml_slides)[-1])
 
-        for slide_id in slides_to_remove:
-            if slide_id in xml_slides:
-                xml_slides.remove(slide_id)
+            for slide_id in slides_to_remove:
+                if slide_id in xml_slides:
+                    xml_slides.remove(slide_id)
 
-        pres.save(temp_pptx.name)
+            pres.save(temp_pptx.name)
+        
         pdf_path = convert_pptx_to_pdf(temp_pptx.name)
         try:
             os.unlink(temp_pptx.name)
