@@ -137,14 +137,21 @@ async def slack_events(request: Request):
         return JSONResponse({"challenge": data["challenge"]})
 
     event = data.get("event", {})
-    if event.get("type") == "message" and not event.get("bot_id"):
-        # Some Slack events might not have a user field
+    event_type = event.get("type")
+    event_subtype = event.get("subtype")
+    
+    # Only process regular messages from users (not bot messages, deletions, edits, etc.)
+    if event_type == "message" and not event.get("bot_id") and not event_subtype:
+        # Regular user messages should have user and channel
         user = event.get("user")
         channel = event.get("channel")
         if user and channel:
             asyncio.create_task(main_llm_loop(channel, user, event.get("text", ""), event))
         else:
-            logger.warning(f"[SLACK_EVENT] Skipping event without user or channel: {event}")
+            logger.warning(f"[SLACK_EVENT] Message missing user or channel: {event}")
+    elif event_type == "message" and event_subtype:
+        # Log subtypes at debug level to reduce noise
+        logger.debug(f"[SLACK_EVENT] Skipping message subtype '{event_subtype}'")
 
     return JSONResponse({"status": "ok"})
 
