@@ -12,7 +12,15 @@ from pptx import Presentation
 import config
 
 # Limit concurrent conversions to avoid CPU/app contention
-_CONVERT_SEMAPHORE = asyncio.Semaphore(int(os.getenv("PDF_CONVERT_CONCURRENCY", "2")))
+# With 2 CPUs, we can handle more concurrent conversions
+_CONVERT_SEMAPHORE = asyncio.Semaphore(int(os.getenv("PDF_CONVERT_CONCURRENCY", "4")))
+
+
+async def convert_pptx_to_pdf_async(pptx_path: str) -> str:
+    """Async wrapper for PDF conversion with semaphore protection"""
+    async with _CONVERT_SEMAPHORE:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, convert_pptx_to_pdf, pptx_path)
 
 
 def convert_pptx_to_pdf(pptx_path: str) -> str:

@@ -34,6 +34,8 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA busy_timeout=5000;")
     conn.execute("PRAGMA synchronous=NORMAL;")
+    # Limit connection cache size to prevent memory growth
+    conn.execute("PRAGMA cache_size=-2000;")  # 2MB cache
     return conn
 
 

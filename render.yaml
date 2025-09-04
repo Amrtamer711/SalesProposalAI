@@ -12,7 +12,7 @@ envVarGroups:
       - key: OPENAI_MODEL
         value: "gpt-4.1"
       - key: PDF_CONVERT_CONCURRENCY
-        value: "2"
+        value: "4"
       - key: TEMPLATES_DIR
         value: "/data/templates"
       - key: PYTHONUNBUFFERED

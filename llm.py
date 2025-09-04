@@ -355,7 +355,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
     )
 
     history = user_history.get(user_id, [])
-    history.append({"role": "user", "content": user_input})
+    history.append({"role": "user", "content": user_input, "timestamp": datetime.now()})
     history = history[-10:]
     messages = [{"role": "developer", "content": prompt}] + history
 

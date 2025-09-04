@@ -266,15 +266,15 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
         try:
             os.unlink(intro_pptx.name)
             os.unlink(outro_pptx.name)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to clean up intro/outro files: {e}")
 
     merged_pdf = await loop.run_in_executor(None, merge_pdfs, pdf_files)
     for pdf_file in pdf_files:
         try:
             os.unlink(pdf_file)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to clean up PDF file {pdf_file}: {e}")
 
     locations_str = ", ".join([p["location"].title() for p in validated_proposals])
 
@@ -340,7 +340,8 @@ async def process_proposals(
     if len(proposals_data) > 1:
         intro_outro_template = _get_digital_location_template(proposals_data)
 
-    for idx, proposal in enumerate(proposals_data):
+    # Process all proposals in parallel for better performance
+    async def process_single_proposal(idx: int, proposal: dict):
         location = proposal.get("location", "").lower().strip()
         start_date = proposal.get("start_date", "1st December 2025")
         durations = proposal.get("durations", [])
@@ -400,19 +401,19 @@ async def process_proposals(
 
         pptx_file, vat_amounts, total_amounts = await loop.run_in_executor(None, create_proposal_with_template, str(src), financial_data)
 
-        individual_files.append({
+        result = {
             "path": pptx_file,
             "location": matched_key.title(),
             "filename": f"{matched_key.title()}_Proposal.pptx",
             "totals": total_amounts,
-        })
-
-        locations.append(matched_key.title())
+            "matched_key": matched_key,
+            "idx": idx
+        }
 
         if is_single:
             pdf_file = await loop.run_in_executor(None, convert_pptx_to_pdf, pptx_file)
-            individual_files[0]["pdf_path"] = pdf_file
-            individual_files[0]["pdf_filename"] = f"{matched_key.title()}_Proposal.pdf"
+            result["pdf_path"] = pdf_file
+            result["pdf_filename"] = f"{matched_key.title()}_Proposal.pdf"
         else:
             # When we have intro/outro slides, remove both first and last from all PPTs
             if intro_outro_template:
@@ -430,7 +431,42 @@ async def process_proposals(
                 else:
                     remove_first = True
             pdf_file = await remove_slides_and_convert_to_pdf(pptx_file, remove_first, remove_last)
-            pdf_files.append(pdf_file)
+            result["pdf_file"] = pdf_file
+            
+        return {"success": True, "result": result}
+
+    # Process all proposals in parallel
+    tasks = [process_single_proposal(idx, proposal) for idx, proposal in enumerate(proposals_data)]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Check for errors and organize results
+    for idx, result in enumerate(results):
+        if isinstance(result, Exception):
+            return {"success": False, "error": f"Error processing proposal {idx + 1}: {str(result)}"}
+        if isinstance(result, dict) and not result.get("success"):
+            return result  # Return the error
+    
+    # Sort results by original index to maintain order
+    sorted_results = sorted(
+        [r for r in results if r.get("success")],
+        key=lambda x: x["result"]["idx"]
+    )
+    
+    # Extract successful results in order
+    for result in sorted_results:
+        proposal_result = result["result"]
+        individual_files.append({
+            "path": proposal_result["path"],
+            "location": proposal_result["location"],
+            "filename": proposal_result["filename"],
+            "totals": proposal_result["totals"],
+        })
+        if "pdf_path" in proposal_result:
+            individual_files[-1]["pdf_path"] = proposal_result["pdf_path"]
+            individual_files[-1]["pdf_filename"] = proposal_result["pdf_filename"]
+        if "pdf_file" in proposal_result:
+            pdf_files.append(proposal_result["pdf_file"])
+        locations.append(proposal_result["location"])
     
     # For multiple proposals, create intro and outro slides
     if len(pdf_files) > 1 and intro_outro_template:
@@ -501,8 +537,8 @@ async def process_proposals(
     for pdf_file in pdf_files:
         try:
             os.unlink(pdf_file)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to clean up PDF file {pdf_file}: {e}")
 
     first_totals = [files.get("totals", ["AED 0"])[0] for files in individual_files]
     summary_total = ", ".join(first_totals)
