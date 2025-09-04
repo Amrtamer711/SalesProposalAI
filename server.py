@@ -138,7 +138,13 @@ async def slack_events(request: Request):
 
     event = data.get("event", {})
     if event.get("type") == "message" and not event.get("bot_id"):
-        asyncio.create_task(main_llm_loop(event["channel"], event["user"], event.get("text", ""), event))
+        # Some Slack events might not have a user field
+        user = event.get("user")
+        channel = event.get("channel")
+        if user and channel:
+            asyncio.create_task(main_llm_loop(channel, user, event.get("text", ""), event))
+        else:
+            logger.warning(f"[SLACK_EVENT] Skipping event without user or channel: {event}")
 
     return JSONResponse({"status": "ok"})
 

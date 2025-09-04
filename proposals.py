@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 
 from pptx import Presentation
+from pypdf import PdfReader, PdfWriter
 
 import config
 import db
@@ -21,10 +22,40 @@ def _template_path_for_key(key: str) -> Path:
     return config.TEMPLATES_DIR / filename
 
 
+def _extract_pages_from_pdf(pdf_path: str, pages: List[int]) -> str:
+    """Extract specific pages from a PDF and save to a new PDF file.
+    
+    Args:
+        pdf_path: Path to the source PDF
+        pages: List of page numbers to extract (0-indexed)
+    
+    Returns:
+        Path to the new PDF file
+    """
+    logger = config.logger
+    logger.info(f"[EXTRACT_PDF] Extracting pages {pages} from {pdf_path}")
+    
+    reader = PdfReader(pdf_path)
+    writer = PdfWriter()
+    
+    for page_num in pages:
+        if page_num < len(reader.pages):
+            writer.add_page(reader.pages[page_num])
+    
+    output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    output_file.close()
+    
+    with open(output_file.name, 'wb') as f:
+        writer.write(f)
+    
+    logger.info(f"[EXTRACT_PDF] Saved extracted pages to {output_file.name}")
+    return output_file.name
 
 
-def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Optional[str]:
-    """Find the first digital location in the proposals for intro/outro slides, or any location if no digital found."""
+
+
+def _get_digital_location_info(proposals_data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Find the first digital location in the proposals and return its info for intro/outro slides."""
     logger = config.logger
     
     # First, look for digital locations
@@ -45,8 +76,14 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
             location_meta = config.LOCATION_METADATA.get(matched_key, {})
             display_type = location_meta.get('display_type', 'Digital')
             if display_type == 'Digital':
-                logger.info(f"[INTRO_OUTRO] Using digital location for intro/outro: {matched_key}")
-                return str(config.TEMPLATES_DIR / mapping[matched_key])
+                logger.info(f"[INTRO_OUTRO] Found digital location for intro/outro: {matched_key}")
+                series = location_meta.get('series', '')
+                return {
+                    'key': matched_key,
+                    'series': series,
+                    'template_path': str(config.TEMPLATES_DIR / mapping[matched_key]),
+                    'metadata': location_meta
+                }
     
     # If no digital location found, use the first location from proposals
     if proposals_data:
@@ -62,8 +99,15 @@ def _get_digital_location_template(proposals_data: List[Dict[str, Any]]) -> Opti
                     break
         
         if matched_key:
+            location_meta = config.LOCATION_METADATA.get(matched_key, {})
+            series = location_meta.get('series', '')
             logger.info(f"[INTRO_OUTRO] No digital location found, using first location: {matched_key}")
-            return str(config.TEMPLATES_DIR / mapping[matched_key])
+            return {
+                'key': matched_key,
+                'series': series,
+                'template_path': str(config.TEMPLATES_DIR / mapping[matched_key]),
+                'metadata': location_meta
+            }
     
     logger.info(f"[INTRO_OUTRO] No suitable location found for intro/outro")
     return None
@@ -184,7 +228,7 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
     pdf_files: List[str] = []
     
     # Check if we'll have intro/outro slides
-    intro_outro_template = _get_digital_location_template(validated_proposals)
+    intro_outro_info = _get_digital_location_info(validated_proposals)
 
     for idx, proposal in enumerate(validated_proposals):
         src = config.TEMPLATES_DIR / proposal["filename"]
@@ -200,7 +244,7 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
             total_combined = None
 
         # When we have intro/outro slides, remove both first and last from all PPTs
-        if intro_outro_template:
+        if intro_outro_info:
             remove_first = True
             remove_last = True
         else:
@@ -224,50 +268,75 @@ async def process_combined_package(proposals_data: list, combined_net_rate: str,
             except:
                 pass
     
-    # For combined proposals, create intro and outro slides from digital locations
-    if intro_outro_template:
-        logger.info(f"[COMBINED] Creating intro/outro from: {intro_outro_template}")
+    # For combined proposals, create intro and outro slides
+    if intro_outro_info:
+        series = intro_outro_info.get('series', '')
+        logger.info(f"[COMBINED] Creating intro/outro for series: {series}")
         
-        # Create intro by keeping only the first slide
-        intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-        intro_pptx.close()
-        shutil.copy2(intro_outro_template, intro_pptx.name)
+        # Check for pre-made PDFs in intro_outro directory
+        intro_outro_dir = config.TEMPLATES_DIR / "intro_outro"
+        pdf_path = None
         
-        # Remove all slides except the first
-        pres = Presentation(intro_pptx.name)
-        xml_slides = pres.slides._sldIdLst
-        slides_to_remove = list(xml_slides)[1:]  # All slides except first
-        for slide_id in slides_to_remove:
-            xml_slides.remove(slide_id)
-        pres.save(intro_pptx.name)
+        # Map series to PDF filenames
+        if 'Landmark' in series:
+            pdf_path = intro_outro_dir / "landmark_series.pdf"
+        elif 'Digital Icons' in series:
+            pdf_path = intro_outro_dir / "digital_icons.pdf"
+        # Add more series mappings as needed
         
-        intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
-        
-        # Create outro by keeping only the last slide
-        outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-        outro_pptx.close()
-        shutil.copy2(intro_outro_template, outro_pptx.name)
-        
-        # Remove all slides except the last
-        pres = Presentation(outro_pptx.name)
-        xml_slides = pres.slides._sldIdLst
-        slides_to_remove = list(xml_slides)[:-1]  # All slides except last
-        for slide_id in slides_to_remove:
-            xml_slides.remove(slide_id)
-        pres.save(outro_pptx.name)
-        
-        outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
+        if pdf_path and pdf_path.exists():
+            logger.info(f"[COMBINED] Using pre-made PDF for intro/outro: {pdf_path}")
+            # Extract first page for intro
+            intro_pdf = _extract_pages_from_pdf(str(pdf_path), [0])
+            # Extract last page for outro (assuming 2-page PDF)
+            reader = PdfReader(str(pdf_path))
+            last_page = len(reader.pages) - 1
+            outro_pdf = _extract_pages_from_pdf(str(pdf_path), [last_page])
+        else:
+            # Fall back to PowerPoint extraction
+            logger.info(f"[COMBINED] No pre-made PDF found, using PowerPoint extraction")
+            template_path = intro_outro_info['template_path']
+            
+            # Create intro by keeping only the first slide
+            intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+            intro_pptx.close()
+            shutil.copy2(template_path, intro_pptx.name)
+            
+            # Remove all slides except the first
+            pres = Presentation(intro_pptx.name)
+            xml_slides = pres.slides._sldIdLst
+            slides_to_remove = list(xml_slides)[1:]  # All slides except first
+            for slide_id in slides_to_remove:
+                xml_slides.remove(slide_id)
+            pres.save(intro_pptx.name)
+            
+            intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
+            
+            # Create outro by keeping only the last slide
+            outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+            outro_pptx.close()
+            shutil.copy2(template_path, outro_pptx.name)
+            
+            # Remove all slides except the last
+            pres = Presentation(outro_pptx.name)
+            xml_slides = pres.slides._sldIdLst
+            slides_to_remove = list(xml_slides)[:-1]  # All slides except last
+            for slide_id in slides_to_remove:
+                xml_slides.remove(slide_id)
+            pres.save(outro_pptx.name)
+            
+            outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
+            
+            # Clean up temp files
+            try:
+                os.unlink(intro_pptx.name)
+                os.unlink(outro_pptx.name)
+            except Exception as e:
+                logger.warning(f"Failed to clean up intro/outro files: {e}")
         
         # Insert intro at beginning and outro at end
         pdf_files.insert(0, intro_pdf)
         pdf_files.append(outro_pdf)
-        
-        # Clean up temp files
-        try:
-            os.unlink(intro_pptx.name)
-            os.unlink(outro_pptx.name)
-        except Exception as e:
-            logger.warning(f"Failed to clean up intro/outro files: {e}")
 
     merged_pdf = await loop.run_in_executor(None, merge_pdfs, pdf_files)
     for pdf_file in pdf_files:
@@ -336,9 +405,9 @@ async def process_proposals(
     loop = asyncio.get_event_loop()
     
     # Check if we'll have intro/outro slides for multiple proposals
-    intro_outro_template = None
+    intro_outro_info = None
     if len(proposals_data) > 1:
-        intro_outro_template = _get_digital_location_template(proposals_data)
+        intro_outro_info = _get_digital_location_info(proposals_data)
 
     # Process all proposals in parallel for better performance
     async def process_single_proposal(idx: int, proposal: dict):
@@ -416,7 +485,7 @@ async def process_proposals(
             result["pdf_filename"] = f"{matched_key.title()}_Proposal.pdf"
         else:
             # When we have intro/outro slides, remove both first and last from all PPTs
-            if intro_outro_template:
+            if intro_outro_info:
                 remove_first = True
                 remove_last = True
             else:
@@ -469,49 +538,74 @@ async def process_proposals(
         locations.append(proposal_result["location"])
     
     # For multiple proposals, create intro and outro slides
-    if len(pdf_files) > 1 and intro_outro_template:
-            logger.info(f"[PROCESS] Creating intro/outro from: {intro_outro_template}")
+    if len(pdf_files) > 1 and intro_outro_info:
+            series = intro_outro_info.get('series', '')
+            logger.info(f"[PROCESS] Creating intro/outro for series: {series}")
             
-            # Create intro by keeping only the first slide
-            intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-            intro_pptx.close()
-            shutil.copy2(intro_outro_template, intro_pptx.name)
+            # Check for pre-made PDFs in intro_outro directory
+            intro_outro_dir = config.TEMPLATES_DIR / "intro_outro"
+            pdf_path = None
             
-            # Remove all slides except the first
-            pres = Presentation(intro_pptx.name)
-            xml_slides = pres.slides._sldIdLst
-            slides_to_remove = list(xml_slides)[1:]  # All slides except first
-            for slide_id in slides_to_remove:
-                xml_slides.remove(slide_id)
-            pres.save(intro_pptx.name)
+            # Map series to PDF filenames
+            if 'Landmark' in series:
+                pdf_path = intro_outro_dir / "landmark_series.pdf"
+            elif 'Digital Icons' in series:
+                pdf_path = intro_outro_dir / "digital_icons.pdf"
+            # Add more series mappings as needed
             
-            intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
-            
-            # Create outro by keeping only the last slide
-            outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
-            outro_pptx.close()
-            shutil.copy2(intro_outro_template, outro_pptx.name)
-            
-            # Remove all slides except the last
-            pres = Presentation(outro_pptx.name)
-            xml_slides = pres.slides._sldIdLst
-            slides_to_remove = list(xml_slides)[:-1]  # All slides except last
-            for slide_id in slides_to_remove:
-                xml_slides.remove(slide_id)
-            pres.save(outro_pptx.name)
-            
-            outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
+            if pdf_path and pdf_path.exists():
+                logger.info(f"[PROCESS] Using pre-made PDF for intro/outro: {pdf_path}")
+                # Extract first page for intro
+                intro_pdf = _extract_pages_from_pdf(str(pdf_path), [0])
+                # Extract last page for outro (assuming 2-page PDF)
+                reader = PdfReader(str(pdf_path))
+                last_page = len(reader.pages) - 1
+                outro_pdf = _extract_pages_from_pdf(str(pdf_path), [last_page])
+            else:
+                # Fall back to PowerPoint extraction
+                logger.info(f"[PROCESS] No pre-made PDF found, using PowerPoint extraction")
+                template_path = intro_outro_info['template_path']
+                
+                # Create intro by keeping only the first slide
+                intro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+                intro_pptx.close()
+                shutil.copy2(template_path, intro_pptx.name)
+                
+                # Remove all slides except the first
+                pres = Presentation(intro_pptx.name)
+                xml_slides = pres.slides._sldIdLst
+                slides_to_remove = list(xml_slides)[1:]  # All slides except first
+                for slide_id in slides_to_remove:
+                    xml_slides.remove(slide_id)
+                pres.save(intro_pptx.name)
+                
+                intro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, intro_pptx.name)
+                
+                # Create outro by keeping only the last slide
+                outro_pptx = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
+                outro_pptx.close()
+                shutil.copy2(template_path, outro_pptx.name)
+                
+                # Remove all slides except the last
+                pres = Presentation(outro_pptx.name)
+                xml_slides = pres.slides._sldIdLst
+                slides_to_remove = list(xml_slides)[:-1]  # All slides except last
+                for slide_id in slides_to_remove:
+                    xml_slides.remove(slide_id)
+                pres.save(outro_pptx.name)
+                
+                outro_pdf = await loop.run_in_executor(None, convert_pptx_to_pdf, outro_pptx.name)
+                
+                # Clean up temp files
+                try:
+                    os.unlink(intro_pptx.name)
+                    os.unlink(outro_pptx.name)
+                except:
+                    pass
             
             # Insert intro at beginning and outro at end
             pdf_files.insert(0, intro_pdf)
             pdf_files.append(outro_pdf)
-            
-            # Clean up temp files
-            try:
-                os.unlink(intro_pptx.name)
-                os.unlink(outro_pptx.name)
-            except:
-                pass
 
     if is_single:
         totals = individual_files[0].get("totals", [])
