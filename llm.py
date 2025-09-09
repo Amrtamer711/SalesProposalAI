@@ -150,6 +150,13 @@ async def _persist_location_upload(location_key: str, pptx_path: Path, metadata_
 async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event: Dict[str, Any] = None):
     logger = config.logger
     
+    # Debug logging
+    logger.info(f"[MAIN_LLM] Starting for user {user_id}, pending_adds: {list(pending_location_additions.keys())}")
+    if slack_event:
+        logger.info(f"[MAIN_LLM] Slack event keys: {list(slack_event.keys())}")
+        if "files" in slack_event:
+            logger.info(f"[MAIN_LLM] Files found: {len(slack_event['files'])}")
+    
     # Send initial status message
     status_message = await config.slack_client.chat_postMessage(
         channel=channel,
