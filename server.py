@@ -150,6 +150,30 @@ async def slack_events(request: Request):
             asyncio.create_task(main_llm_loop(channel, user, event.get("text", ""), event))
         else:
             logger.warning(f"[SLACK_EVENT] Message missing user or channel: {event}")
+    # Handle file_shared events where Slack does not send a message subtype
+    elif event_type == "file_shared":
+        try:
+            file_id = event.get("file_id") or (event.get("file", {}).get("id") if isinstance(event.get("file"), dict) else None)
+            user = event.get("user_id") or event.get("user")
+            channel = event.get("channel_id") or event.get("channel")
+            if not file_id:
+                logger.warning(f"[SLACK_EVENT] file_shared without file_id: {event}")
+            else:
+                # Fetch full file info so downstream can detect PPT
+                info = await config.slack_client.files_info(file=file_id)
+                file_obj = info.get("file", {}) if isinstance(info, dict) else getattr(info, "data", {}).get("file", {})
+                # Fallback channel from file channels list if missing
+                if not channel:
+                    channels = file_obj.get("channels") or []
+                    if isinstance(channels, list) and channels:
+                        channel = channels[0]
+                if user and channel and file_obj:
+                    synthetic_event = {"type": "message", "subtype": "file_share", "file": file_obj, "user": user, "channel": channel}
+                    asyncio.create_task(main_llm_loop(channel, user, "", synthetic_event))
+                else:
+                    logger.warning(f"[SLACK_EVENT] Cannot route file_shared event, missing user/channel/file: user={user}, channel={channel}, has_file={bool(file_obj)}")
+        except Exception as e:
+            logger.error(f"[SLACK_EVENT] Error handling file_shared: {e}", exc_info=True)
     elif event_type == "message" and event_subtype:
         # Log subtypes at debug level to reduce noise
         logger.debug(f"[SLACK_EVENT] Skipping message subtype '{event_subtype}'")

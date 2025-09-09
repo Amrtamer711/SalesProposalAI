@@ -266,8 +266,8 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
             )
             return
     
-    # Clean up old pending additions (older than 5 minutes)
-    cutoff = datetime.now() - timedelta(minutes=5)
+    # Clean up old pending additions (older than 10 minutes)
+    cutoff = datetime.now() - timedelta(minutes=10)
     expired_users = [
         uid for uid, data in pending_location_additions.items()
         if data.get("timestamp", datetime.now()) < cutoff
