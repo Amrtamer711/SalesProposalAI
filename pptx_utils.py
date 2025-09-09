@@ -174,10 +174,14 @@ def build_location_text(location_key: str, spots: int) -> str:
     
     # Size (Height x Width)
     if height and width:
-        # Remove 'm' suffix if present and re-add it
-        h = str(height).replace('m', '').strip()
-        w = str(width).replace('m', '').strip()
-        parts.append(f"Size ({h}m x {w}m)")
+        # Check for "Multiple Sizes" special case
+        if "multiple sizes" in str(height).lower() or "multiple sizes" in str(width).lower():
+            parts.append("Multiple Sizes")
+        else:
+            # Remove 'm' suffix if present and re-add it
+            h = str(height).replace('m', '').strip()
+            w = str(width).replace('m', '').strip()
+            parts.append(f"Size ({h}m x {w}m)")
     
     # Number of faces
     parts.append(f"{num_faces} faces")

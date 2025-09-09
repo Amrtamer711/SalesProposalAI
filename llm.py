@@ -160,11 +160,14 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
     # Check if user has a pending location addition and uploaded a PPT
     if user_id in pending_location_additions and slack_event and "files" in slack_event:
         pending_data = pending_location_additions[user_id]
+        logger.info(f"[LOCATION_ADD] Found pending location for user {user_id}: {pending_data['location_key']}")
+        logger.info(f"[LOCATION_ADD] Files in event: {len(slack_event.get('files', []))}")
         
         # Check if any of the files is a PPT
         pptx_file = None
         for f in slack_event["files"]:
-            if f.get("filetype") == "pptx" or f.get("mimetype", "").endswith("powerpoint"):
+            logger.info(f"[LOCATION_ADD] Checking file: name={f.get('name')}, filetype={f.get('filetype')}, mimetype={f.get('mimetype')}")
+            if f.get("filetype") == "pptx" or f.get("mimetype", "").endswith("powerpoint") or f.get("name", "").lower().endswith(".pptx"):
                 try:
                     pptx_file = await _download_slack_file(f)
                     break
@@ -452,7 +455,7 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
         {
             "type": "function", 
             "name": "add_location", 
-            "description": "Add a new location. Admin must provide ALL required metadata upfront, then upload the PPT file. Digital locations require: sov, spot_duration, loop_duration, upload_fee. Static locations don't need these fields.", 
+            "description": "Add a new location. Admin must provide ALL required metadata upfront. Digital locations require: sov, spot_duration, loop_duration, upload_fee. Static locations don't need these fields.", 
             "parameters": {
                 "type": "object", 
                 "properties": {
@@ -626,6 +629,31 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                 spot_duration = args.get("spot_duration")
                 loop_duration = args.get("loop_duration")
                 upload_fee = args.get("upload_fee")
+                
+                # Clean duration values - remove any non-numeric suffixes
+                if spot_duration is not None:
+                    # Convert to string first to handle the cleaning
+                    spot_str = str(spot_duration).strip()
+                    # Remove common suffixes like 's', 'sec', 'seconds', '"'
+                    spot_str = spot_str.rstrip('s"').rstrip('sec').rstrip('seconds').strip()
+                    try:
+                        spot_duration = int(spot_str)
+                    except ValueError:
+                        await config.slack_client.chat_delete(channel=channel, ts=status_ts)
+                        await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"❌ **Error:** Invalid spot duration '{spot_duration}'. Please provide a number in seconds (e.g., 10, 12, 16)."))
+                        return
+                
+                if loop_duration is not None:
+                    # Convert to string first to handle the cleaning
+                    loop_str = str(loop_duration).strip()
+                    # Remove common suffixes like 's', 'sec', 'seconds', '"'
+                    loop_str = loop_str.rstrip('s"').rstrip('sec').rstrip('seconds').strip()
+                    try:
+                        loop_duration = int(loop_str)
+                    except ValueError:
+                        await config.slack_client.chat_delete(channel=channel, ts=status_ts)
+                        await config.slack_client.chat_postMessage(channel=channel, text=config.markdown_to_slack(f"❌ **Error:** Invalid loop duration '{loop_duration}'. Please provide a number in seconds (e.g., 96, 100)."))
+                        return
                 
                 # Validate required fields
                 missing = []
