@@ -140,8 +140,9 @@ async def slack_events(request: Request):
     event_type = event.get("type")
     event_subtype = event.get("subtype")
     
-    # Only process regular messages from users (not bot messages, deletions, edits, etc.)
-    if event_type == "message" and not event.get("bot_id") and not event_subtype:
+    # Process regular messages and file uploads from users (not bot messages)
+    # Allow file_share subtype for file uploads
+    if event_type == "message" and not event.get("bot_id") and (not event_subtype or event_subtype == "file_share"):
         # Regular user messages should have user and channel
         user = event.get("user")
         channel = event.get("channel")
