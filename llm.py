@@ -165,14 +165,24 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
     status_ts = status_message.get("ts")
     
     # Check if user has a pending location addition and uploaded a PPT
-    if user_id in pending_location_additions and slack_event and "files" in slack_event:
+    # Also check for file_share events which Slack sometimes uses
+    has_files = slack_event and ("files" in slack_event or (slack_event.get("subtype") == "file_share"))
+    
+    if user_id in pending_location_additions and has_files:
         pending_data = pending_location_additions[user_id]
         logger.info(f"[LOCATION_ADD] Found pending location for user {user_id}: {pending_data['location_key']}")
         logger.info(f"[LOCATION_ADD] Files in event: {len(slack_event.get('files', []))}")
         
         # Check if any of the files is a PPT
         pptx_file = None
-        for f in slack_event["files"]:
+        files = slack_event.get("files", [])
+        
+        # If it's a file_share event, files might be structured differently
+        if not files and slack_event.get("subtype") == "file_share" and "file" in slack_event:
+            files = [slack_event["file"]]
+            logger.info(f"[LOCATION_ADD] Using file from file_share event")
+        
+        for f in files:
             logger.info(f"[LOCATION_ADD] Checking file: name={f.get('name')}, filetype={f.get('filetype')}, mimetype={f.get('mimetype')}")
             if f.get("filetype") == "pptx" or f.get("mimetype", "").endswith("powerpoint") or f.get("name", "").lower().endswith(".pptx"):
                 try:
@@ -709,6 +719,9 @@ async def main_llm_loop(channel: str, user_id: str, user_input: str, slack_event
                     "upload_fee": upload_fee,
                     "timestamp": datetime.now()
                 }
+                
+                logger.info(f"[LOCATION_ADD] Stored pending location for user {user_id}: {location_key}")
+                logger.info(f"[LOCATION_ADD] Current pending additions: {list(pending_location_additions.keys())}")
                 
                 # Ask for PPT file
                 summary_text = (
